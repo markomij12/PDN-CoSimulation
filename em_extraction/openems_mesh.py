@@ -9,6 +9,7 @@ See: https://docs.openems.de/python/openEMS.html
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -16,15 +17,18 @@ import numpy as np
 from em_extraction.geometry import ParallelPlateGeometry
 from em_extraction.sparams import SParameterResult, write_touchstone
 
-# Broadband pulse covering the validation band (hundreds of MHz to a few GHz).
-# FDTD is cheap here; 100 kHz PDN sweeps are a later, separate question.
+# Band-pass Gauss: f0 > fc so the spectrum excludes DC. A baseband pulse would
+# leave electrostatic charge on the plate pair and the energy end-criteria never trips.
 F0_HZ = 1.5e9
-FC_HZ = 1.5e9
+FC_HZ = 1.0e9
 N_FREQS = 401
-METAL_THICKNESS_M = 35e-6  # 1 oz copper, not part of the analytical Z0 model
-AIRBOX_MARGIN_M = 10e-3
 MAX_TIMESTEPS = 80_000
 END_CRITERIA = 1e-4
+N_CELLS_ACROSS_GAP = 17
+N_CELLS_ALONG_WIDTH = 12
+PML_CELLS = 8
+PML_CELL_MM = 1.0
+PORT_THICKNESS_MM = 0.5
 
 
 class OpenEMSNotInstalledError(ImportError):
@@ -54,15 +58,25 @@ def extract_sparams(
     ContinuousStructure, openEMS = _import_openems()
 
     if freqs_hz is None:
-        freqs_hz = np.linspace(0.0, 2.0 * F0_HZ, N_FREQS)
+        freqs_hz = np.linspace(F0_HZ - FC_HZ, F0_HZ + FC_HZ, N_FREQS)
     else:
         freqs_hz = np.asarray(freqs_hz, dtype=float)
 
-    sim_path = Path(sim_dir) if sim_dir is not None else Path("results") / "openems_parallel_plate"
+    sim_path = (
+        Path(sim_dir).resolve()
+        if sim_dir is not None
+        else (Path("results") / "openems_parallel_plate").resolve()
+    )
     sim_path.mkdir(parents=True, exist_ok=True)
 
     fdtd, ports = _build_simulation(geom, ContinuousStructure, openEMS)
-    fdtd.Run(str(sim_path), cleanup=False)
+    # openEMS.Run chdirs into sim_path and then requires cwd == sim_path;
+    # a relative path fails that check. Always pass an absolute path.
+    cwd = Path.cwd()
+    try:
+            fdtd.Run(str(sim_path), cleanup=True)
+    finally:
+        os.chdir(cwd)
 
     for port in ports:
         port.CalcPort(str(sim_path), freqs_hz, ref_impedance=geom.z0_ref)
@@ -97,60 +111,74 @@ def _import_openems():
 
 
 def _build_simulation(geom: ParallelPlateGeometry, ContinuousStructure, openEMS):
-    """Mesh a parallel-plate pair with lumped ports at x = 0 and x = length.
+    """Enclosed parallel-plate waveguide matching Z0 ≈ η h / (w sqrt(εr)).
 
-    Coordinates in mm (CSXCAD `SetDeltaUnit(1e-3)`). Propagation +x, width +y, stack +z.
+    Coordinates in mm. Propagation +x, width +y, stack +z.
+    PEC on z = the two plates; PMC on y = magnetic walls (no fringing);
+    MUR on x = the ports sit on the open ends. No airbox — radiation was
+    why |S11|²+|S21|² was far below 1 with the open-plate mesh.
     """
     mm = 1e3
     length = geom.length * mm
     width = geom.width * mm
     height = geom.height * mm
-    metal_t = METAL_THICKNESS_M * mm
-    margin = AIRBOX_MARGIN_M * mm
+    margin = PML_CELLS * PML_CELL_MM
+    port_dx = PORT_THICKNESS_MM
+    z_air = margin
 
     fdtd = openEMS(NrTS=MAX_TIMESTEPS, EndCriteria=END_CRITERIA)
     fdtd.SetGaussExcite(F0_HZ, FC_HZ)
-    fdtd.SetBoundaryCond(["MUR", "MUR", "MUR", "MUR", "MUR", "MUR"])
+    # PMC on y: no-fringing sidewalls (matches Z0 = η h / w).
+    # Explicit plates end at x=0 and x=L; x/z PML absorbs leftover radiation.
+    # Do NOT continue the guide into PML — a thin lumped R is otherwise just a bump
+    # on an infinite PP waveguide and |S21| stays ~0.4 while energy vanishes in PML.
+    fdtd.SetBoundaryCond(["PML_8", "PML_8", "PMC", "PMC", "PML_8", "PML_8"])
 
     csx = ContinuousStructure()
     fdtd.SetCSX(csx)
     mesh = csx.GetGrid()
     mesh.SetDeltaUnit(1e-3)
 
-    # Dielectric: 0..length, 0..width, 0..height
+    x0, x1 = 0.0, length
     substrate = csx.AddMaterial("substrate", epsilon=geom.epsilon_r)
     substrate.AddBox([0.0, 0.0, 0.0], [length, width, height], priority=1)
 
     pec = csx.AddMetal("pec")
-    # Bottom plate slightly into z < 0 so the port spans a well-defined gap.
-    pec.AddBox([0.0, 0.0, -metal_t], [length, width, 0.0], priority=10)
-    pec.AddBox([0.0, 0.0, height], [length, width, height + metal_t], priority=10)
+    pec.AddBox([0.0, 0.0, 0.0], [length, width, 0.0], priority=10)
+    pec.AddBox([0.0, 0.0, height], [length, width, height], priority=10)
 
-    # Lumped ports across the dielectric at each end, current in z.
     port1 = fdtd.AddLumpedPort(
         1,
         geom.z0_ref,
-        [0.0, 0.0, 0.0],
-        [0.0, width, height],
+        [x0, 0.0, 0.0],
+        [x0 + port_dx, width, height],
         "z",
         excite=1.0,
         priority=5,
+        edges2grid="all",
     )
     port2 = fdtd.AddLumpedPort(
         2,
         geom.z0_ref,
-        [length, 0.0, 0.0],
-        [length, width, height],
+        [x1 - port_dx, 0.0, 0.0],
+        [x1, width, height],
         "z",
         excite=0,
         priority=5,
+        edges2grid="all",
     )
 
-    mesh.AddLine("x", [-margin, 0.0, length, length + margin])
-    mesh.AddLine("y", [-margin, 0.0, width, width + margin])
-    mesh.AddLine("z", [-margin - metal_t, -metal_t, 0.0, height, height + metal_t, height + metal_t + margin])
+    n_int = max(12, int(np.ceil(length / max(port_dx, 1.0))))
+    mesh.AddLine("x", np.linspace(-margin, 0.0, PML_CELLS + 1))
+    mesh.AddLine("x", np.linspace(0.0, length, n_int + 1))
+    mesh.AddLine("x", np.linspace(length, length + margin, PML_CELLS + 1))
+    mesh.AddLine("y", np.linspace(0.0, width, N_CELLS_ALONG_WIDTH))
+    mesh.AddLine("z", np.linspace(-z_air, 0.0, PML_CELLS + 1))
+    mesh.AddLine("z", np.linspace(0.0, height, N_CELLS_ACROSS_GAP))
+    mesh.AddLine("z", np.linspace(height, height + z_air, PML_CELLS + 1))
 
-    # Resolve ~λ/20 in dielectric at (f0+fc).
+    return fdtd, (port1, port2)
+
     c_mm_per_s = 299792458.0 * mm
     lambda_d = c_mm_per_s / ((F0_HZ + FC_HZ) * np.sqrt(geom.epsilon_r))
     max_res = lambda_d / 20.0
