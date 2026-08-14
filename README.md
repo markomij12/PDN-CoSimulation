@@ -4,13 +4,13 @@ Python pipeline for PCB **power delivery network** (PDN) work: take a layout, ex
 
 This is the open-source version of what SI/PI teams do with HFSS/SIwave + Cadence. It directly extends PDN simulation work at Endura.
 
-**Status:** Phase 1 validation gate is passing. `python run_pipeline.py` prints the closed-form plate; `pytest` compares openEMS `.s2p` to that formula.
+**Status:** Phase 1 validation gate is passing. Phase 2 reads a KiCad board and extracts 2-port S-params between the IC power pin and a decap via — no manual coordinates.
 
 ## Phase 1 — EM extraction baseline
 
 Validation gate: mesh a **simple parallel-plate pair** in openEMS, extract 2-port S-parameters, and compare S11/S21 to the analytical transmission-line formula. If they disagree by more than a few percent, the mesh or ports are wrong — do not move on.
 
-The plate is a **solver-validation geometry**, not a PDN. A realistic power/ground pair is wide and thin (Z0 ~ 1 Ω); S-parameters against 50 Ω are poorly conditioned and a bad first test. Defaults are a thick, narrower plate (10 mm × 1.6 mm FR-4, Z0 ~ 28 Ω) so the FDTD vs closed-form check is well-conditioned. The mesh uses PMC sidewalls (no-fringing, matching the Z0 formula) and stops the plates at the lumped ports so the guide does not continue into PML. A 4-layer KiCad test board comes in Phase 2.
+The plate is a **solver-validation geometry**, not a PDN. A realistic power/ground pair is wide and thin (Z0 ~ 1 Ω); S-parameters against 50 Ω are poorly conditioned and a bad first test. Defaults are a thick, narrower plate (10 mm × 1.6 mm FR-4, Z0 ~ 28 Ω) so the FDTD vs closed-form check is well-conditioned. The mesh uses PMC sidewalls (no-fringing, matching the Z0 formula) and stops the plates at the lumped ports so the guide does not continue into PML. A 4-layer KiCad test board is in `boards/pdn_test.kicad_pcb` (Phase 2).
 
 ## Open question (after the validation gate)
 
@@ -22,8 +22,8 @@ openEMS is FDTD. A PDN impedance sweep from 100 kHz–1 GHz is an awkward time-d
 ## Stack
 
 - Python 3.11+ (NumPy, SciPy, Matplotlib, pandas, PySpice)
-- KiCad 8 (`pcbnew`) — Phase 2
-- openEMS / CSXCAD — Phase 1 extractor
+- KiCad 8 — Phase 2 board files. The pipeline parses `.kicad_pcb` s-expressions in the project venv (`pcbnew` is *not* imported; it only exists in KiCad's bundled Python).
+- openEMS / CSXCAD — Phase 1 plate + Phase 2 board extractor
 - ngspice — later phases
 
 ## How to run Phase 1
@@ -45,6 +45,25 @@ python -c "from pathlib import Path; from em_extraction import ParallelPlateGeom
 ```
 
 `pytest` always checks closed-form Z0. The FDTD vs analytical comparison runs when that `.s2p` exists and requires |S| error < 5% in the excite band.
+
+## How to run Phase 2 (KiCad → openEMS)
+
+Activate the project venv first (it already has CSXCAD/openEMS):
+
+```bash
+cd /Users/markomijatovic/Projects/PDN-CoSimulation
+source .venv/bin/activate
+python run_pipeline.py --board boards/pdn_test.kicad_pcb
+pytest
+```
+
+That reads via/pad coordinates and stackup from the `.kicad_pcb` (no manual xy), meshes the inner VCC/GND plane pair, and writes `results/board.s2p` (gitignored). Port 1 is footprint `U1` on net `VCC`; port 2 is the first VCC via (`--decap-index N` selects another).
+
+After a layout edit in KiCad, save the board and rerun the same command — no mesh edits.
+
+`pytest` unit-tests the reader against the checked-in board (no solver). The board FDTD smoke (`|S11|²+|S21|² ≈ 1` in the excite band) runs when `results/board.s2p` exists. The Phase 1 analytical gate is unchanged.
+
+Net/footprint conventions are in `boards/README.md`.
 
 ## System dependencies (macOS, Apple Silicon)
 
@@ -76,5 +95,5 @@ cd ~/src/openEMS-Project
 
 `--disable-GUI` skips AppCSXCAD (needs extra Qt). TinyXML is downloaded by the script; Homebrew no longer ships it.
 
-- **KiCad 8** — Phase 2. `pcbnew` lives in KiCad's bundled Python, not the project venv.
+- **KiCad 8** — optional GUI to edit `boards/pdn_test.kicad_pcb`. The pipeline does not call `pcbnew`.
 - **ngspice** — later; transient sim via PySpice or subprocess.
