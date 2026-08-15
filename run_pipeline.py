@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""PDN pipeline entry: Phase 1 plate by default, Phase 2 with --board.
+"""PDN pipeline entry: Phase 1 plate by default, Phase 2 with --board, Phase 3 with --spice.
 
     python run_pipeline.py
     python run_pipeline.py --board boards/pdn_test.kicad_pcb
+    python run_pipeline.py --spice results/board.s2p
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from em_extraction import (
     characteristic_impedance,
 )
 from em_extraction.kicad_reader import read_board
-from em_extraction.openems_mesh import openems_available
 
 # Spot-check frequencies (Hz) for the console report — not the FDTD sweep grid.
 REPORT_FREQS_HZ = np.array([1e8, 5e8, 1e9])
@@ -33,12 +33,22 @@ def main(argv: list[str] | None = None) -> None:
         help="KiCad .kicad_pcb (Phase 2). Default is the Phase 1 validation plate.",
     )
     parser.add_argument(
+        "--spice",
+        type=Path,
+        help="Cached Touchstone .s2p (Phase 3). Does not run openEMS.",
+    )
+    parser.add_argument(
         "--decap-index",
         type=int,
         default=0,
         help="Which VCC via to use as port 2 (default: 0, first decap site).",
     )
     args = parser.parse_args(argv)
+    if args.board is not None and args.spice is not None:
+        raise SystemExit("use --board or --spice, not both")
+    if args.spice is not None:
+        _run_spice(args.spice)
+        return
     if args.board is not None:
         _run_board(args.board, args.decap_index)
         return
@@ -65,6 +75,8 @@ def _run_plate() -> None:
             f"{abs(s21):10.4f}  {np.angle(s21, deg=True):10.2f}"
         )
     print()
+
+    from em_extraction.openems_mesh import openems_available
 
     if not openems_available():
         print(
@@ -104,6 +116,8 @@ def _run_board(board_path: Path, decap_index: int) -> None:
         print(f"    [{i}] ({site.x_m * 1e3:.2f}, {site.y_m * 1e3:.2f}) mm{mark}")
     print(flush=True)
 
+    from em_extraction.openems_mesh import openems_available
+
     if not openems_available():
         print(
             "openEMS/CSXCAD is not installed. Geometry read succeeded; "
@@ -131,6 +145,36 @@ def _run_board(board_path: Path, decap_index: int) -> None:
             f"  {result.freqs_hz[idx] / 1e6:10.1f}  {abs(s11):10.4f}  "
             f"{abs(s21):10.4f}  {conserv:14.4f}"
         )
+
+
+def _run_spice(s2p_path: Path) -> None:
+    from spice_models import MissingS2pError, from_sparams, ngspice_available
+    from spice_models.simulate import simulate_droop
+
+    print(f"Phase 3 — SPICE from {s2p_path} (no openEMS)")
+    try:
+        netlist = from_sparams(s2p_path)
+    except MissingS2pError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    eq = netlist.equivalent
+    print(
+        f"  pi: R={eq.r_series_ohm * 1e3:.2f} mΩ  L={eq.l_series_h * 1e9:.3f} nH  "
+        f"C_ic={eq.c_ic_f * 1e12:.2f} pF  C_decap={eq.c_decap_f * 1e12:.2f} pF"
+    )
+    print(
+        f"  VRM {netlist.vrm.vref_v:.3g} V + {netlist.vrm.r_out_ohm * 1e3:.3g} mΩ + "
+        f"{netlist.vrm.l_out_h * 1e9:.3g} nH; "
+        f"step {netlist.load.i_final_a:.3g} A; {len(netlist.decaps)} MLCC(s)"
+    )
+    if not ngspice_available():
+        raise SystemExit(
+            "ngspice not found. On this Mac: brew install ngspice. "
+            "Then re-run --spice (still does not launch FDTD)."
+        )
+    result = simulate_droop(netlist)
+    print(result.summary_path.read_text().rstrip())
+    print(f"  wrote {result.droop_png}  {result.z_png}")
 
 
 if __name__ == "__main__":

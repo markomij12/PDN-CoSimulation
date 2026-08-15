@@ -23,6 +23,7 @@ from spice_models.netlist import (
     from_sparams,
 )
 from spice_models.ngspice import NgspiceNotInstalledError, ngspice_available
+from spice_models.simulate import DroopResult, simulate_droop
 
 __all__ = [
     "DECAP_100N_0402",
@@ -32,6 +33,7 @@ __all__ = [
     "DEFAULT_LOAD",
     "DEFAULT_VRM",
     "Decap",
+    "DroopResult",
     "MissingS2pError",
     "NgspiceNotInstalledError",
     "SpiceNetlist",
@@ -40,4 +42,5 @@ __all__ = [
     "VRM",
     "from_sparams",
     "ngspice_available",
+    "simulate_droop",
 ]
