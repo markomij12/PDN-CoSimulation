@@ -4,7 +4,7 @@ Python pipeline for PCB **power delivery network** (PDN) work: take a layout, ex
 
 This is the open-source version of what SI/PI teams do with HFSS/SIwave + Cadence. It directly extends PDN simulation work at Endura.
 
-**Status:** Phase 1 validation gate is passing. Phase 2 reads a KiCad board and extracts 2-port S-params between the IC power pin and a decap via — no manual coordinates.
+**Status:** Phase 1 and 2 are on `main`. openEMS is the **validator** (mesh/ports), not the inner-loop extractor. Phase 3 is SPICE from cached `.s2p`.
 
 ## Phase 1 — EM extraction baseline
 
@@ -12,19 +12,20 @@ Validation gate: mesh a **simple parallel-plate pair** in openEMS, extract 2-por
 
 The plate is a **solver-validation geometry**, not a PDN. A realistic power/ground pair is wide and thin (Z0 ~ 1 Ω); S-parameters against 50 Ω are poorly conditioned and a bad first test. Defaults are a thick, narrower plate (10 mm × 1.6 mm FR-4, Z0 ~ 28 Ω) so the FDTD vs closed-form check is well-conditioned. The mesh uses PMC sidewalls (no-fringing, matching the Z0 formula) and stops the plates at the lumped ports so the guide does not continue into PML. A 4-layer KiCad test board is in `boards/pdn_test.kicad_pcb` (Phase 2).
 
-## Open question (after the validation gate)
+## Decision: openEMS is the validator
 
-openEMS is FDTD. A PDN impedance sweep from 100 kHz–1 GHz is an awkward time-domain problem: the mesh is set by the smallest feature, the run length by the lowest frequency. Putting FDTD inside an optimizer loop may be too slow. After Phase 1 passes, choose with evidence:
+FDTD proved the mesh and lumped ports (Phase 1 analytical gate; Phase 2 board power-conservation smoke). A 100 kHz–1 GHz PDN sweep is an awkward time-domain problem, so **do not put openEMS inside the SPICE or optimizer loop**.
 
-- **openEMS as validator** — FDTD proves mesh/ports; a fast plane model drives optimization.
-- **openEMS as extractor** — every layout change re-runs FDTD, likely over a narrower band.
+- **Phase 3+ consume cached Touchstone** (`results/board.s2p`, regenerated only when the layout changes).
+- A fast plane / cavity model can drive later optimization; FDTD remains a spot-check, not the inner loop.
+- `python run_pipeline.py` (no `--board`) still does not auto-run FDTD. `--board` may run FDTD once to refresh `.s2p`; SPICE must not.
 
 ## Stack
 
 - Python 3.11+ (NumPy, SciPy, Matplotlib, pandas, PySpice)
 - KiCad 8 — Phase 2 board files. The pipeline parses `.kicad_pcb` s-expressions in the project venv (`pcbnew` is *not* imported; it only exists in KiCad's bundled Python).
-- openEMS / CSXCAD — Phase 1 plate + Phase 2 board extractor
-- ngspice — later phases
+- openEMS / CSXCAD — validator (Phase 1 plate + Phase 2 board `.s2p`), not the SPICE inner loop
+- ngspice — Phase 3
 
 ## How to run Phase 1
 
