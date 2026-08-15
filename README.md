@@ -4,7 +4,7 @@ Python pipeline for PCB **power delivery network** (PDN) work: take a layout, ex
 
 This is the open-source version of what SI/PI teams do with HFSS/SIwave + Cadence. It directly extends PDN simulation work at Endura.
 
-**Status:** Phase 1 and 2 are on `main`. openEMS is the **validator** (mesh/ports), not the inner-loop extractor. Phase 3 is SPICE from cached `.s2p`.
+**Status:** Phase 1–3 are on this tree. openEMS is the **validator** (mesh/ports), not the inner-loop extractor. Phase 3 is SPICE from cached `.s2p` — it does not launch FDTD.
 
 ## Phase 1 — EM extraction baseline
 
@@ -25,7 +25,7 @@ FDTD proved the mesh and lumped ports (Phase 1 analytical gate; Phase 2 board po
 - Python 3.11+ (NumPy, SciPy, Matplotlib, pandas, PySpice)
 - KiCad 8 — Phase 2 board files. The pipeline parses `.kicad_pcb` s-expressions in the project venv (`pcbnew` is *not* imported; it only exists in KiCad's bundled Python).
 - openEMS / CSXCAD — validator (Phase 1 plate + Phase 2 board `.s2p`), not the SPICE inner loop
-- ngspice — Phase 3
+- ngspice — Phase 3 transient / AC (`brew install ngspice`). The pipeline shells out to the binary; libngspice / PySpice is not required.
 
 ## How to run Phase 1
 
@@ -66,6 +66,29 @@ After a layout edit in KiCad, save the board and rerun the same command — no m
 
 Net/footprint conventions are in `boards/README.md`.
 
+## How to run Phase 3 (cached `.s2p` → ngspice)
+
+Activate the project venv. SPICE does **not** run openEMS; it only reads an existing Touchstone.
+
+```bash
+cd /Users/markomijatovic/Projects/PDN-CoSimulation
+source .venv/bin/activate
+python run_pipeline.py --spice results/board.s2p
+pytest
+```
+
+If `results/board.s2p` is missing, the command tells you to run `--board` first. `--board` is still the way to regenerate `.s2p` after a layout change; `--spice` will not refresh it.
+
+Needs ngspice on PATH:
+
+```bash
+brew install ngspice
+```
+
+Writes `results/droop.png` (IC-pin voltage vs time), `results/z_pdn.png` (|Z(f)| of the same circuit), and a short numeric summary (peak droop, settling). Port 1 = IC pin, port 2 = decap site. VRM, MLCC ESR/ESL, and the lumped 2-port fit are documented in `spice_models/README.md`.
+
+`pytest` unit-tests netlist generation from the analytical plate (always) and from `results/board.s2p` when that file exists. The transient test skips if ngspice is missing; if ngspice is present it asserts finite voltages and a measurable load-step droop (not a flat rail). Phase 1 and 2 tests are unchanged.
+
 ## System dependencies (macOS, Apple Silicon)
 
 These are **not** pip packages. On this Mac they are already installed:
@@ -75,6 +98,7 @@ These are **not** pip packages. On this Mac they are already installed:
 | Homebrew | `/opt/homebrew` (`eval "$(/opt/homebrew/bin/brew shellenv)"` is in `~/.zprofile`) |
 | cmake, boost, hdf5, cgal, vtk | `brew install cmake boost hdf5 cgal vtk pkg-config` |
 | openEMS C++ | `~/opt/openEMS` (`openEMS --help` via `~/opt/openEMS/bin/openEMS`) |
+| ngspice | `/opt/homebrew/bin/ngspice` (`brew install ngspice`) |
 | Python bindings | project `.venv` (not a pip package) |
 | Source tree | `~/src/openEMS-Project` |
 
@@ -97,4 +121,4 @@ cd ~/src/openEMS-Project
 `--disable-GUI` skips AppCSXCAD (needs extra Qt). TinyXML is downloaded by the script; Homebrew no longer ships it.
 
 - **KiCad 8** — optional GUI to edit `boards/pdn_test.kicad_pcb`. The pipeline does not call `pcbnew`.
-- **ngspice** — later; transient sim via PySpice or subprocess.
+- **ngspice** — `brew install ngspice`. Headless `ngspice -b` for Phase 3; `--spice` does not launch FDTD.
