@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""PDN pipeline entry: Phase 1 plate by default, Phase 2 with --board, Phase 3 with --spice.
+"""PDN pipeline entry: Phase 1 plate by default; --board / --spice / --optimize.
 
     python run_pipeline.py
     python run_pipeline.py --board boards/pdn_test.kicad_pcb
     python run_pipeline.py --spice results/board.s2p
+    python run_pipeline.py --optimize results/board.s2p
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from em_extraction.kicad_reader import read_board
 # Spot-check frequencies (Hz) for the console report — not the FDTD sweep grid.
 REPORT_FREQS_HZ = np.array([1e8, 5e8, 1e9])
 BOARD_S2P = Path("results") / "board.s2p"
+DEFAULT_BOARD = Path("boards") / "pdn_test.kicad_pcb"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -38,14 +40,23 @@ def main(argv: list[str] | None = None) -> None:
         help="Cached Touchstone .s2p (Phase 3). Does not run openEMS.",
     )
     parser.add_argument(
+        "--optimize",
+        type=Path,
+        help="Cached Touchstone .s2p (Phase 4 BOM search). Does not run openEMS.",
+    )
+    parser.add_argument(
         "--decap-index",
         type=int,
         default=0,
         help="Which VCC via to use as port 2 (default: 0, first decap site).",
     )
     args = parser.parse_args(argv)
-    if args.board is not None and args.spice is not None:
-        raise SystemExit("use --board or --spice, not both")
+    chosen = [flag for flag in (args.board, args.spice, args.optimize) if flag is not None]
+    if len(chosen) > 1:
+        raise SystemExit("use --board, --spice, or --optimize, not more than one")
+    if args.optimize is not None:
+        _run_optimize(args.optimize)
+        return
     if args.spice is not None:
         _run_spice(args.spice)
         return
@@ -175,6 +186,53 @@ def _run_spice(s2p_path: Path) -> None:
     result = simulate_droop(netlist)
     print(result.summary_path.read_text().rstrip())
     print(f"  wrote {result.droop_png}  {result.z_png}")
+
+
+def _run_optimize(s2p_path: Path) -> None:
+    from optimizer import optimize_decap_bom
+    from spice_models import MissingS2pError
+    from spice_models.ngspice import NgspiceNotInstalledError
+
+    print(f"Phase 4 — optimize decap BOM from {s2p_path} (no openEMS)")
+    board_path = DEFAULT_BOARD if DEFAULT_BOARD.is_file() else None
+    if board_path is not None:
+        print(f"  placement board {board_path} (fast plane, not FDTD)")
+    else:
+        print("  no KiCad board found; count/value search only (2-port site)")
+    try:
+        result = optimize_decap_bom(s2p_path, board_path=board_path)
+    except MissingS2pError as exc:
+        raise SystemExit(str(exc)) from exc
+    except NgspiceNotInstalledError as exc:
+        raise SystemExit(
+            "ngspice not found. On this Mac: brew install ngspice. "
+            "Then re-run --optimize (still does not launch FDTD)."
+        ) from exc
+
+    names = ", ".join(cap.name for cap in result.stuffing) or "(empty)"
+    print(
+        f"  peak |Z| {result.peak_z_before_ohm:.4g} Ω → {result.peak_z_after_ohm:.4g} Ω "
+        f"(2-port SPICE, 100 kHz–1 GHz); Z_target={result.z_target_ohm * 1e3:.0f} mΩ"
+    )
+    print(
+        f"  BOM ${result.cost_before_usd:.2f} → ${result.cost_after_usd:.2f} "
+        f"(budget ${result.cost_budget_usd:.2f}; "
+        f"{'feasible' if result.feasible else 'constraint missed'})"
+    )
+    print(f"  stuffing: {names}")
+    if result.placement_site_indices:
+        placed = ", ".join(
+            f"{cap.name}@via[{i}]"
+            for cap, i in zip(result.stuffing, result.placement_site_indices, strict=True)
+        )
+        plane_z = (
+            f"{result.plane_peak_z_ohm:.4g} Ω"
+            if result.plane_peak_z_ohm is not None
+            else "n/a"
+        )
+        print(f"  placement: {placed}  (plane peak |Z| {plane_z})")
+    elif board_path is None:
+        print("  placement: skipped (pass a KiCad board next to the cached .s2p)")
 
 
 if __name__ == "__main__":
