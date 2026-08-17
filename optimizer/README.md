@@ -9,11 +9,19 @@ first.
 
 ## Objective
 
-_To be filled in._ Peak |Z(f)| over the search band.
+Peak |Z(f)| over 100 kHz–1 GHz (`FMIN_HZ` = 1e5, `FMAX_HZ` = 1e9).
+`optimizer.objective.peak_abs_z` is pure NumPy on `DroopResult.z_ohm` and
+`DroopResult.freq_hz` from `spice_models.simulate_droop` when ngspice is
+present — it does not parse wrdata. `z_ohm` may be complex (`np.abs`).
+The band mask is inclusive. No in-band samples raises `ValueError`.
 
 ## Z_target
 
-_To be filled in._ Default matches `spice_models.simulate.Z_TARGET_OHM` (50 mΩ).
+Default `Z_TARGET_OHM` = 50 mΩ, defined in `optimizer/objective.py` so the
+objective module does not import `spice_models.simulate` (ngspice /
+matplotlib). Matches `spice_models.simulate.Z_TARGET_OHM` and the
+`z_pdn.png` reference line. Tighter than 50 mV / 0.5 A = 100 mΩ
+(equivalent to a 25 mV budget at the Phase 3 0.5 A step).
 
 ## Cost
 
