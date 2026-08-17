@@ -21,7 +21,11 @@ __all__ = [
 
 @dataclass(frozen=True)
 class OptimizeResult:
-    """BOM stuffing plus before/after peak |Z| and cost. Artifacts under results/."""
+    """BOM stuffing plus before/after peak |Z| and cost. Artifacts under results/.
+
+    ``peak_z_before_ohm`` / ``peak_z_after_ohm`` are 2-port SPICE. Placement
+    and ``plane_peak_z_ohm`` come from the fast plane when ``board_path`` is set.
+    """
 
     stuffing: tuple[Decap, ...]
     peak_z_before_ohm: float
@@ -32,6 +36,8 @@ class OptimizeResult:
     feasible: bool
     z_target_ohm: float
     artifacts: dict[str, Path]
+    placement_site_indices: tuple[int, ...] = ()
+    plane_peak_z_ohm: float | None = None
 
 
 def optimize_decap_bom(
@@ -48,14 +54,14 @@ def optimize_decap_bom(
     """Search a discrete MLCC BOM to minimize peak |Z(f)| under a cost cap.
 
     Reads a cached `.s2p`. Does not import or launch CSXCAD, openEMS, or pcbnew.
-    `board_path` is reserved for later placement; FDTD remains a validator, not
-    the inner loop. `max_count` is 0–N of each catalog part (default 2 → 27
-    candidates).
+    Count/value search stays on the 2-port ngspice grid. If `board_path` is
+    set, the winning stuffing is assigned across VCC vias with the fast plane
+    (not FDTD). If `board_path` is None, placement stays empty. `max_count` is
+    0–N of each catalog part (default 2 → 27 candidates).
     """
     # Lazy import: search.py imports optimizer.cost / objective, not this module.
     from optimizer.search import search_count_grid
 
-    _ = board_path  # Part 5: placement across vias. Unused in the count grid.
     _ = results_dir  # Part 7: before/after plots. Search uses a scratch dir.
 
     outcome = search_count_grid(
@@ -65,6 +71,22 @@ def optimize_decap_bom(
         fmax_hz=fmax_hz,
         max_count=max_count,
     )
+
+    placement_site_indices: tuple[int, ...] = ()
+    plane_peak_z_ohm: float | None = None
+    if board_path is not None:
+        import numpy as np
+
+        from em_extraction.kicad_reader import read_board
+        from optimizer.plane import assign_caps_to_sites, placement_site_indices as site_indices
+
+        board = read_board(board_path)
+        freq_hz = np.logspace(np.log10(fmin_hz), np.log10(fmax_hz), 81)
+        stuffing_at_sites, _unused, plane_peak_z_ohm = assign_caps_to_sites(
+            board, outcome.stuffing, freq_hz
+        )
+        placement_site_indices = site_indices(outcome.stuffing, stuffing_at_sites)
+
     return OptimizeResult(
         stuffing=outcome.stuffing,
         peak_z_before_ohm=outcome.peak_z_before_ohm,
@@ -75,4 +97,6 @@ def optimize_decap_bom(
         feasible=outcome.feasible,
         z_target_ohm=z_target_ohm,
         artifacts={},
+        placement_site_indices=placement_site_indices,
+        plane_peak_z_ohm=plane_peak_z_ohm,
     )

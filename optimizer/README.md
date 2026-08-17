@@ -40,7 +40,7 @@ $0.00. Unknown `Decap.part` strings raise `ValueError`.
 ## Grid
 
 Count/value stuffing at the single extracted 2-port site (Touchstone port 2).
-Not placement across vias — no site permutation yet.
+Placement across VCC vias is the Fast plane assignment below, not this grid.
 
 Catalog is `spice_models.library.DEFAULT_DECAPS` in order: `DECAP_100N_0402`,
 `DECAP_1U_0603`, `DECAP_22U_0805` (Murata 100 nF 0402, 1 µF 0603, 22 µF 0805).
@@ -56,4 +56,60 @@ yet). SciPy `minimize` / continuous C is deferred.
 
 ## Fast plane
 
-_To be filled in._ Cheap cavity/spreading model for placement; not openEMS.
+Cheap 1-cavity / spreading model for **placement** after the 2-port count/value
+search. Not a mesh, not openEMS, not CSXCAD: a handful of nodes, dense Y, NumPy
+`linalg.solve` over frequency. `plane_impedance` does not call ngspice.
+
+Port / site mapping (from `read_board`, never typed by hand):
+
+- Touchstone **port 1** = U1/VCC (`BoardGeometry.ic_power_pin`).
+- Decap **sites** = VCC vias (`BoardGeometry.decap_sites`). pdn_test has M = 3.
+
+pdn_test coupon geometry (read from the board, not hardcoded in the model):
+30 mm × 20 mm outline, inner gap h = 1.04 mm, εr = 4.5.
+
+Formulas (electrically small below ~1 GHz):
+
+1. Parallel-plate cavity capacitance, lumped at the IC node:
+
+   `C_pp = ε0 * εr * A / h` with `A = (xmax − xmin) * (ymax − ymin)`.
+
+   On pdn_test this is **~23 pF**. `plane_capacitance(board)` exports that value.
+   `ε0 = 8.854187817e-12`.
+
+2. Spreading inductance IC → site k:
+
+   `L_k = (μ0 * h / (2π)) * ln(r_k / r_via)`
+   with `r_k = hypot(x_k − x_ic, y_k − y_ic)` and `μ0 = 4e-7 * π`.
+
+   `BoardFeature` has no drill. Default `r_via` = **0.15 mm**
+   (`DEFAULT_VIA_RADIUS_M`). If `r_k <= r_via`, the ln argument is clamped with
+   `max(r_k, r_via * e) / r_via` so `ln >= 1`, `L_k >= μ0 h / 2π` ~ **0.2 nH**,
+   and the solve does not produce NaN.
+
+3. Each stuffed MLCC at its site uses the `spice_models` `Decap` R–L–C, not an
+   ideal C: `Z_cap = ESR + jω ESL + 1/(jω C)`. Several caps on one via are
+   parallel (sum of `1/Z_cap` on that site node).
+
+4. VRM shunt at the IC (`spice_models.library.DEFAULT_VRM`):
+   `Z_vrm = R_out + jω L_out` (`R_out` = 10 mΩ, `L_out` = 2 nH). Low-f |Z| is
+   ~**10 mΩ**, not `1/ωC → ∞` of a bare cavity.
+
+Nodal stamp (ground implicit): IC node + one node per **used** site. Stamp
+`C_pp` and `1/Z_vrm` on the IC; series `1/(jω L_k)` between IC and site k;
+`1/Z_cap` on each cap at its site. Drive 1 A into the IC; `Z_ic(f) = V_ic`.
+Default frequency grid if the caller omits one: `logspace` 100 kHz–1 GHz,
+81 points.
+
+`assign_caps_to_sites` enumerates assignments of each of N caps to one of M
+sites (`M^N`; pdn_test M = 3, N typically ≤ 6 → at most 729 NumPy solves).
+Empty stuffing is the bare plane+VRM (all sites empty; does not crash). The
+winner is the assignment with lowest peak `|Z_ic|`. `optimize_decap_bom` still
+selects the BOM with the Part 4 2-port ngspice grid; if `board_path` is set it
+then stores `placement_site_indices` (parallel to `stuffing`) and
+`plane_peak_z_ohm`. `peak_z_before` / `peak_z_after` stay the 2-port SPICE
+numbers — a cached `.s2p` cannot move caps. If `board_path` is None, placement
+is left empty (no silent site search).
+
+`plane_z_map` is a coarse peak-|Z| vs xy grid (probe node + spreading L to the
+IC, inject at the probe) for the later spatial plot. Still not a mesh.
