@@ -39,7 +39,20 @@ $0.00. Unknown `Decap.part` strings raise `ValueError`.
 
 ## Grid
 
-_To be filled in._ Discrete catalog stuffing (count/value), not continuous C.
+Count/value stuffing at the single extracted 2-port site (Touchstone port 2).
+Not placement across vias — no site permutation yet.
+
+Catalog is `spice_models.library.DEFAULT_DECAPS` in order: `DECAP_100N_0402`,
+`DECAP_1U_0603`, `DECAP_22U_0805` (Murata 100 nF 0402, 1 µF 0603, 22 µF 0805).
+Each part may appear 0, 1, or 2 times (`MAX_COUNT_PER_PART` = 2) → 3³ = 27
+candidates. Repeats get unique SPICE names via
+`dataclasses.replace(cap, name=f"{cap.name}_{i}")` with `i` starting at 1,
+because `_render_circuit` emits `R{name}` / `L{name}` / `C{name}`. Price still
+keys off `Decap.part`. Empty stuffing `(0, 0, 0)` is the before baseline.
+
+The inner loop is `from_sparams` + `simulate_droop` + `peak_abs_z` (ngspice, not
+FDTD). Objective is min peak |Z|; the constraint is BOM cost (not `Z_target`
+yet). SciPy `minimize` / continuous C is deferred.
 
 ## Fast plane
 

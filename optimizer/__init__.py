@@ -43,13 +43,36 @@ def optimize_decap_bom(
     fmax_hz: float = 1e9,
     board_path: Path | str | None = None,
     results_dir: Path | str = Path("results"),
+    max_count: int = 2,
 ) -> OptimizeResult:
     """Search a discrete MLCC BOM to minimize peak |Z(f)| under a cost cap.
 
     Reads a cached `.s2p`. Does not import or launch CSXCAD, openEMS, or pcbnew.
     `board_path` is reserved for later placement; FDTD remains a validator, not
-    the inner loop.
+    the inner loop. `max_count` is 0–N of each catalog part (default 2 → 27
+    candidates).
     """
-    raise NotImplementedError(
-        "optimize_decap_bom is not implemented yet (Phase 4)."
+    # Lazy import: search.py imports optimizer.cost / objective, not this module.
+    from optimizer.search import search_count_grid
+
+    _ = board_path  # Part 5: placement across vias. Unused in the count grid.
+    _ = results_dir  # Part 7: before/after plots. Search uses a scratch dir.
+
+    outcome = search_count_grid(
+        s2p_path,
+        cost_budget_usd=cost_budget_usd,
+        fmin_hz=fmin_hz,
+        fmax_hz=fmax_hz,
+        max_count=max_count,
+    )
+    return OptimizeResult(
+        stuffing=outcome.stuffing,
+        peak_z_before_ohm=outcome.peak_z_before_ohm,
+        peak_z_after_ohm=outcome.peak_z_after_ohm,
+        cost_before_usd=outcome.cost_before_usd,
+        cost_after_usd=outcome.cost_after_usd,
+        cost_budget_usd=cost_budget_usd,
+        feasible=outcome.feasible,
+        z_target_ohm=z_target_ohm,
+        artifacts={},
     )
