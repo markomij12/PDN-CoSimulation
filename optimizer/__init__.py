@@ -8,6 +8,7 @@ not the inner loop. Generate or refresh the Touchstone with
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,9 +61,9 @@ def optimize_decap_bom(
     0–N of each catalog part (default 2 → 27 candidates).
     """
     # Lazy import: search.py imports optimizer.cost / objective, not this module.
+    from optimizer.report import write_optimize_artifacts
     from optimizer.search import search_count_grid
-
-    _ = results_dir  # Part 7: before/after plots. Search uses a scratch dir.
+    from spice_models import from_sparams, simulate_droop
 
     outcome = search_count_grid(
         s2p_path,
@@ -74,6 +75,8 @@ def optimize_decap_bom(
 
     placement_site_indices: tuple[int, ...] = ()
     plane_peak_z_ohm: float | None = None
+    board = None
+    stuffing_at_sites: tuple[tuple[Decap, ...], ...] | None = None
     if board_path is not None:
         import numpy as np
 
@@ -87,6 +90,30 @@ def optimize_decap_bom(
         )
         placement_site_indices = site_indices(outcome.stuffing, stuffing_at_sites)
 
+    results = Path(results_dir)
+    with tempfile.TemporaryDirectory(prefix="pdn_opt_check_") as scratch:
+        scratch_dir = Path(scratch)
+        before = simulate_droop(
+            from_sparams(s2p_path, decaps=()),
+            results_dir=scratch_dir / "before",
+        )
+        after = simulate_droop(
+            from_sparams(s2p_path, decaps=outcome.stuffing),
+            results_dir=scratch_dir / "after",
+        )
+        artifacts = write_optimize_artifacts(
+            results_dir=results,
+            stuffing=outcome.stuffing,
+            cost_after_usd=outcome.cost_after_usd,
+            cost_budget_usd=cost_budget_usd,
+            feasible=outcome.feasible,
+            z_target_ohm=z_target_ohm,
+            before=before,
+            after=after,
+            board=board,
+            stuffing_at_sites=stuffing_at_sites,
+        )
+
     return OptimizeResult(
         stuffing=outcome.stuffing,
         peak_z_before_ohm=outcome.peak_z_before_ohm,
@@ -96,7 +123,7 @@ def optimize_decap_bom(
         cost_budget_usd=cost_budget_usd,
         feasible=outcome.feasible,
         z_target_ohm=z_target_ohm,
-        artifacts={},
+        artifacts=artifacts,
         placement_site_indices=placement_site_indices,
         plane_peak_z_ohm=plane_peak_z_ohm,
     )

@@ -112,4 +112,16 @@ numbers — a cached `.s2p` cannot move caps. If `board_path` is None, placement
 is left empty (no silent site search).
 
 `plane_z_map` is a coarse peak-|Z| vs xy grid (probe node + spreading L to the
-IC, inject at the probe) for the later spatial plot. Still not a mesh.
+IC, inject at the probe) for the spatial plot. Still not a mesh.
+
+## Artifacts
+
+`--optimize` writes gitignored files under `results/`:
+
+- `z_opt.png` — before/after |Z(f)| (log-log, Z_target line) from a 2-port
+  SPICE re-sim of empty vs winning stuffing (check, not the inner loop)
+- `droop_opt.png` — before/after IC-pin transient from that same check
+- `bom_cost.txt` — part, qty, unit $, ext $
+- `z_spatial.png` — fast-plane peak |Z| vs xy when `board_path` is set
+  (IC + stuffed/empty VCC vias overlaid; not openEMS)
+

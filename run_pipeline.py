@@ -233,6 +233,9 @@ def _run_optimize(s2p_path: Path) -> None:
         print(f"  placement: {placed}  (plane peak |Z| {plane_z})")
     elif board_path is None:
         print("  placement: skipped (pass a KiCad board next to the cached .s2p)")
+    wrote = "  ".join(str(path) for path in result.artifacts.values())
+    if wrote:
+        print(f"  wrote {wrote}")
 
 
 if __name__ == "__main__":
