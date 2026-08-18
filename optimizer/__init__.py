@@ -1,9 +1,10 @@
-"""Discrete MLCC BOM search: cached Touchstone in, peak |Z(f)| down.
+"""Discrete MLCC BOM search: cavity-plane inner loop, peak |Z(f)| down.
 
-This package searches a discrete MLCC BOM to minimize peak |Z(f)| and MUST NOT
-call openEMS / CSXCAD / pcbnew. Cached Touchstone in; FDTD is the validator,
-not the inner loop. Generate or refresh the Touchstone with
-`python run_pipeline.py --board ...` first.
+This package searches a discrete MLCC BOM and via placement to minimize
+peak |Z(f)| and MUST NOT call openEMS / CSXCAD / pcbnew. The inner loop is
+the fast cavity plane, not ngspice. Cached Touchstone is used only for the
+post-search 2-port SPICE artifact re-sim. Generate or refresh the Touchstone
+with `python run_pipeline.py --board ...` first.
 """
 
 from __future__ import annotations
@@ -24,8 +25,9 @@ __all__ = [
 class OptimizeResult:
     """BOM stuffing plus before/after peak |Z| and cost. Artifacts under results/.
 
-    ``peak_z_before_ohm`` / ``peak_z_after_ohm`` are 2-port SPICE. Placement
-    and ``plane_peak_z_ohm`` come from the fast plane when ``board_path`` is set.
+    ``peak_z_before_ohm`` / ``peak_z_after_ohm`` are fast-plane peak |Z_ic|,
+    not 2-port SPICE. ``plane_peak_z_ohm`` is the winner's plane peak (same as
+    ``peak_z_after_ohm``).
     """
 
     stuffing: tuple[Decap, ...]
@@ -52,43 +54,36 @@ def optimize_decap_bom(
     results_dir: Path | str = Path("results"),
     max_count: int = 2,
 ) -> OptimizeResult:
-    """Search a discrete MLCC BOM to minimize peak |Z(f)| under a cost cap.
+    """Search a discrete MLCC BOM and placement to minimize plane peak |Z(f)|.
 
-    Reads a cached `.s2p`. Does not import or launch CSXCAD, openEMS, or pcbnew.
-    Count/value search stays on the 2-port ngspice grid. If `board_path` is
-    set, the winning stuffing is assigned across VCC vias with the fast plane
-    (not FDTD). If `board_path` is None, placement stays empty. `max_count` is
-    0–N of each catalog part (default 2 → 27 candidates).
+    Requires ``board_path`` (e.g. ``boards/pdn_test.kicad_pcb``). The inner
+    loop is the fast cavity plane (``search_plane_grid``), not ngspice. Does
+    not import or launch CSXCAD, openEMS, or pcbnew. After the search, a
+    2-port SPICE re-sim of empty vs winner writes artifacts (needs a cached
+    `.s2p`). `max_count` is 0–N of each catalog part (default 2 → 27 stuffing
+    vectors).
     """
-    # Lazy import: search.py imports optimizer.cost / objective, not this module.
+    if board_path is None:
+        raise ValueError(
+            "board_path is required for the plane-scored search "
+            "(e.g. boards/pdn_test.kicad_pcb); the optimizer does not "
+            "silently skip placement"
+        )
+
+    # Lazy import: search.py imports optimizer.cost / objective / plane, not this module.
+    from em_extraction.kicad_reader import read_board
     from optimizer.report import write_optimize_artifacts
-    from optimizer.search import search_count_grid
+    from optimizer.search import search_plane_grid
     from spice_models import from_sparams, simulate_droop
 
-    outcome = search_count_grid(
-        s2p_path,
+    board = read_board(board_path)
+    outcome = search_plane_grid(
+        board,
         cost_budget_usd=cost_budget_usd,
         fmin_hz=fmin_hz,
         fmax_hz=fmax_hz,
         max_count=max_count,
     )
-
-    placement_site_indices: tuple[int, ...] = ()
-    plane_peak_z_ohm: float | None = None
-    board = None
-    stuffing_at_sites: tuple[tuple[Decap, ...], ...] | None = None
-    if board_path is not None:
-        import numpy as np
-
-        from em_extraction.kicad_reader import read_board
-        from optimizer.plane import assign_caps_to_sites, placement_site_indices as site_indices
-
-        board = read_board(board_path)
-        freq_hz = np.logspace(np.log10(fmin_hz), np.log10(fmax_hz), 81)
-        stuffing_at_sites, _unused, plane_peak_z_ohm = assign_caps_to_sites(
-            board, outcome.stuffing, freq_hz
-        )
-        placement_site_indices = site_indices(outcome.stuffing, stuffing_at_sites)
 
     results = Path(results_dir)
     with tempfile.TemporaryDirectory(prefix="pdn_opt_check_") as scratch:
@@ -111,7 +106,7 @@ def optimize_decap_bom(
             before=before,
             after=after,
             board=board,
-            stuffing_at_sites=stuffing_at_sites,
+            stuffing_at_sites=outcome.stuffing_at_sites,
         )
 
     return OptimizeResult(
@@ -124,6 +119,6 @@ def optimize_decap_bom(
         feasible=outcome.feasible,
         z_target_ohm=z_target_ohm,
         artifacts=artifacts,
-        placement_site_indices=placement_site_indices,
-        plane_peak_z_ohm=plane_peak_z_ohm,
+        placement_site_indices=outcome.placement_site_indices,
+        plane_peak_z_ohm=outcome.peak_z_after_ohm,
     )

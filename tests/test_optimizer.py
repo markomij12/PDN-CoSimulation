@@ -146,10 +146,23 @@ def test_optimizer_does_not_import_openems_or_pcbnew() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def test_optimize_requires_board_path(tmp_path: Path) -> None:
+    missing = tmp_path / "nope.s2p"
+    with pytest.raises(ValueError, match="boards/pdn_test.kicad_pcb"):
+        optimize_decap_bom(missing, results_dir=tmp_path)
+
+
 def test_optimize_missing_s2p_tells_you_to_run_board(tmp_path: Path) -> None:
     missing = tmp_path / "nope.s2p"
+    if not BOARD_PATH.exists():
+        pytest.skip(f"{BOARD_PATH} not found")
     with pytest.raises(MissingS2pError, match="--board"):
-        optimize_decap_bom(missing, results_dir=tmp_path)
+        optimize_decap_bom(
+            missing,
+            board_path=BOARD_PATH,
+            results_dir=tmp_path,
+            max_count=1,
+        )
 
 
 # --- Skip if ngspice missing OR .s2p missing --------------------------------

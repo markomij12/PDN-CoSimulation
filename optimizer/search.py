@@ -1,35 +1,41 @@
-"""Discrete count/value grid at the extracted 2-port decap site.
+"""Discrete count/value and placement search on the fast cavity plane.
 
-0–2 of each catalog MLCC at Touchstone port 2 (27 stuffing vectors). Does not
-import CSXCAD, openEMS, or pcbnew, and does not call FDTD. Cached `.s2p` in;
-ngspice evaluates each candidate. Repeats get unique ``Decap.name`` values so
-``_render_circuit`` can emit legal SPICE. SciPy / continuous C is deferred.
+0–2 of each catalog MLCC assigned across ``BoardGeometry.decap_sites``. Does
+not import CSXCAD, openEMS, or pcbnew, and does not call FDTD or ngspice.
+The inner loop is ``plane_impedance`` / ``peak_abs_z``; cached `.s2p` is not
+regenerated per candidate. Repeats get unique ``Decap.name`` values so a
+later 2-port SPICE check can emit legal netlist instance names. SciPy /
+continuous C is deferred.
 """
 
 from __future__ import annotations
 
 import itertools
-import tempfile
 from dataclasses import dataclass, replace
-from pathlib import Path
 
-from spice_models import Decap, from_sparams, simulate_droop
-from spice_models.library import DEFAULT_DECAPS
+import numpy as np
+
+from em_extraction.kicad_reader import BoardGeometry
+from spice_models.library import DEFAULT_DECAPS, Decap
 
 from optimizer.cost import bom_cost, cost_within_budget
 from optimizer.objective import peak_abs_z
+from optimizer.plane import assign_caps_to_sites, plane_impedance, placement_site_indices
 
 MAX_COUNT_PER_PART = 2
 LIBRARY_PARTS: tuple[Decap, ...] = DEFAULT_DECAPS
 
 _EMPTY_COUNTS = (0, 0, 0)
+_N_FREQ = 81
 
 
 @dataclass(frozen=True)
-class CountGridResult:
-    """Winner plus before/after peak |Z| and cost. Assembled into OptimizeResult."""
+class PlaneGridResult:
+    """Winner plus before/after plane peak |Z| and cost. Assembled into OptimizeResult."""
 
     stuffing: tuple[Decap, ...]
+    stuffing_at_sites: tuple[tuple[Decap, ...], ...]
+    placement_site_indices: tuple[int, ...]
     peak_z_before_ohm: float
     peak_z_after_ohm: float
     cost_before_usd: float
@@ -38,7 +44,7 @@ class CountGridResult:
 
 
 def stuffing_from_counts(counts: tuple[int, int, int]) -> tuple[Decap, ...]:
-    """Build a port-2 stuffing vector from per-part counts in ``LIBRARY_PARTS`` order.
+    """Build a stuffing vector from per-part counts in ``LIBRARY_PARTS`` order.
 
     The first copy of each part keeps the library ``Decap.name``. Repeats use
     ``replace(cap, name=f"{cap.name}_{i}")`` with ``i`` starting at 1 so SPICE
@@ -66,36 +72,44 @@ def enumerate_count_grid(
     ]
 
 
-def search_count_grid(
-    s2p_path: Path | str,
+def search_plane_grid(
+    board: BoardGeometry,
     *,
     cost_budget_usd: float,
     fmin_hz: float,
     fmax_hz: float,
     max_count: int = MAX_COUNT_PER_PART,
-) -> CountGridResult:
-    """Evaluate the count grid; pick min peak |Z| under the cost cap.
+) -> PlaneGridResult:
+    """Evaluate stuffing × site assignment; pick min plane peak |Z| under the cost cap.
 
-    Lets ``from_sparams`` raise ``MissingS2pError`` and ``simulate_droop`` raise
-    ``NgspiceNotInstalledError``. Does not call FDTD. Writes ngspice / matplotlib
-    scratch under one ``TemporaryDirectory`` so ``results/droop.png`` and
-    ``results/z_pdn.png`` are not clobbered. ``max_count`` defaults to 2 (27
-    candidates); tests may pass 1 to keep the wall time in seconds.
+    For each count-grid stuffing, ``assign_caps_to_sites`` enumerates placement
+    on ``board.decap_sites``. Score is ``peak_abs_z`` of ``plane_impedance``
+    ``Z_ic`` over ``fmin_hz``–``fmax_hz``. Does not call ngspice, FDTD, or
+    ``from_sparams``. ``max_count`` defaults to 2 (27 stuffing vectors); tests
+    may pass 1 to keep the wall time in seconds.
     """
     empty = stuffing_from_counts(_EMPTY_COUNTS)
-    evaluated: list[tuple[tuple[Decap, ...], float, float]] = []
+    freq_hz = np.logspace(np.log10(fmin_hz), np.log10(fmax_hz), _N_FREQ)
+    evaluated: list[
+        tuple[
+            tuple[Decap, ...],
+            float,
+            float,
+            tuple[tuple[Decap, ...], ...],
+            tuple[int, ...],
+        ]
+    ] = []
     peak_z_before: float | None = None
 
-    with tempfile.TemporaryDirectory(prefix="pdn_opt_") as scratch:
-        scratch_dir = Path(scratch)
-        for stuffing in enumerate_count_grid(max_count):
-            netlist = from_sparams(s2p_path, decaps=stuffing)
-            droop = simulate_droop(netlist, results_dir=scratch_dir)
-            peak = peak_abs_z(droop.z_ohm, droop.freq_hz, fmin_hz, fmax_hz)
-            cost = bom_cost(stuffing)
-            evaluated.append((stuffing, peak, cost))
-            if stuffing == empty:
-                peak_z_before = peak
+    for stuffing in enumerate_count_grid(max_count):
+        sites, _unused, _assign_peak = assign_caps_to_sites(board, stuffing, freq_hz)
+        freq, z_ic = plane_impedance(board, sites, freq_hz)
+        peak = peak_abs_z(z_ic, freq, fmin_hz, fmax_hz)
+        cost = bom_cost(stuffing)
+        indices = placement_site_indices(stuffing, sites)
+        evaluated.append((stuffing, peak, cost, sites, indices))
+        if stuffing == empty:
+            peak_z_before = peak
 
     if peak_z_before is None:
         raise RuntimeError("count grid did not evaluate the empty stuffing baseline")
@@ -104,16 +118,20 @@ def search_count_grid(
         row for row in evaluated if cost_within_budget(row[0], cost_budget_usd)
     ]
     if feasible_rows:
-        winner, peak_after, cost_after = min(feasible_rows, key=lambda row: row[1])
+        winner, peak_after, cost_after, sites_after, indices_after = min(
+            feasible_rows, key=lambda row: row[1]
+        )
         feasible = True
     else:
-        winner, peak_after, cost_after = min(
+        winner, peak_after, cost_after, sites_after, indices_after = min(
             evaluated, key=lambda row: (row[2], row[1])
         )
         feasible = False
 
-    return CountGridResult(
+    return PlaneGridResult(
         stuffing=winner,
+        stuffing_at_sites=sites_after,
+        placement_site_indices=indices_after,
         peak_z_before_ohm=peak_z_before,
         peak_z_after_ohm=peak_after,
         cost_before_usd=bom_cost(empty),
