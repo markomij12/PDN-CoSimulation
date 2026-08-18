@@ -1,8 +1,9 @@
 """Before/after |Z(f)|, BOM cost table, and optional spatial |Z| map.
 
 Writes gitignored files under ``results/``. Does not import CSXCAD, openEMS, or
-pcbnew, and does not launch FDTD. The 2-port SPICE check is a post-search
-re-sim of empty vs winning stuffing, not the inner loop.
+pcbnew, and does not launch FDTD. ``z_opt.png`` is the fast-plane overlay
+(empty sites vs placed winner from ``plane_impedance``), not 2-port SPICE.
+Droop remains a post-search 2-port ngspice check of empty vs winning stuffing.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from spice_models import DroopResult
 from spice_models.library import Decap
 
 from optimizer.cost import unit_price_usd
-from optimizer.plane import plane_z_map
+from optimizer.plane import plane_impedance, plane_z_map
 
 
 def write_optimize_artifacts(
@@ -38,13 +39,17 @@ def write_optimize_artifacts(
     board: BoardGeometry | None,
     stuffing_at_sites: Sequence[Sequence[Decap]] | None,
 ) -> dict[str, Path]:
-    """Write |Z(f)| overlay, cost table, droop overlay, and spatial map if placed."""
+    """Write fast-plane |Z(f)| overlay, cost table, droop overlay, and spatial map if placed."""
     out = Path(results_dir)
     out.mkdir(parents=True, exist_ok=True)
     artifacts: dict[str, Path] = {}
-    artifacts["z_png"] = _plot_z_before_after(
-        before, after, z_target_ohm, out / "z_opt.png"
-    )
+    if board is not None and stuffing_at_sites is not None:
+        empty_sites = tuple(() for _ in board.decap_sites)
+        freq_hz, z_empty = plane_impedance(board, empty_sites)
+        _freq_winner, z_winner = plane_impedance(board, stuffing_at_sites, freq_hz)
+        artifacts["z_png"] = _plot_z_before_after(
+            freq_hz, z_empty, z_winner, z_target_ohm, out / "z_opt.png"
+        )
     artifacts["droop_png"] = _plot_droop_before_after(before, after, out / "droop_opt.png")
     artifacts["bom_txt"] = _write_bom_cost(
         stuffing,
@@ -106,25 +111,26 @@ def _write_bom_cost(
 
 
 def _plot_z_before_after(
-    before: DroopResult,
-    after: DroopResult,
+    freq_hz: np.ndarray,
+    z_before: np.ndarray,
+    z_after: np.ndarray,
     z_target_ohm: float,
     path: Path,
 ) -> Path:
     fig, ax = plt.subplots(figsize=(7.5, 4.2))
     ax.loglog(
-        before.freq_hz,
-        np.abs(before.z_ohm),
+        freq_hz,
+        np.abs(z_before),
         color="#888888",
         lw=1.3,
-        label="before (empty)",
+        label="before (empty sites, fast plane)",
     )
     ax.loglog(
-        after.freq_hz,
-        np.abs(after.z_ohm),
+        freq_hz,
+        np.abs(z_after),
         color="#1f4e79",
         lw=1.5,
-        label="after (optimized BOM)",
+        label="after (placed winner, fast plane)",
     )
     ax.axhline(
         z_target_ohm,
@@ -135,7 +141,7 @@ def _plot_z_before_after(
     )
     ax.set_xlabel("frequency (Hz)")
     ax.set_ylabel("|Z| (Ω)")
-    ax.set_title("PDN |Z(f)| at the IC pin (2-port SPICE check, no FDTD)")
+    ax.set_title("PDN |Z(f)| at the IC pin (fast plane, not ngspice)")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
