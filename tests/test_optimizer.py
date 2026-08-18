@@ -22,7 +22,12 @@ from optimizer.plane import (
     spreading_inductance,
 )
 from optimizer.report import write_optimize_artifacts
-from optimizer.search import ParetoPoint, enumerate_count_grid, stuffing_from_counts
+from optimizer.search import (
+    ParetoPoint,
+    enumerate_count_grid,
+    search_plane_grid,
+    stuffing_from_counts,
+)
 from spice_models import ngspice_available
 from spice_models.library import (
     DECAP_100N_0402,
@@ -227,6 +232,58 @@ def test_optimize_missing_s2p_skips_2port_check(tmp_path: Path) -> None:
     assert "droop_png" not in result.artifacts
 
 
+def test_search_plane_grid_inner_loop_no_ngspice() -> None:
+    """max_count=1 is 2³=8 plane evaluations, not 27× ngspice."""
+    if not BOARD_PATH.exists():
+        pytest.skip(f"{BOARD_PATH} not found")
+    board = read_board(BOARD_PATH)
+    result = search_plane_grid(
+        board,
+        cost_budget_usd=0.50,
+        fmin_hz=1e5,
+        fmax_hz=1e9,
+        max_count=1,
+    )
+    assert np.isfinite(result.peak_z_before_ohm)
+    assert np.isfinite(result.peak_z_after_ohm)
+    assert result.peak_z_after_ohm <= result.peak_z_before_ohm
+    assert len(result.evaluated_points) == 8
+    assert result.feasible is True
+    assert isinstance(result.stuffing, tuple)
+    assert all(isinstance(cap, Decap) for cap in result.stuffing)
+
+
+def test_placement_changes_plane_abs_z() -> None:
+    """Same MLCC at nearest vs farthest VCC via must not yield identical Z(f)."""
+    if not BOARD_PATH.exists():
+        pytest.skip(f"{BOARD_PATH} not found")
+    board = read_board(BOARD_PATH)
+    n_sites = len(board.decap_sites)
+    if n_sites < 2:
+        pytest.fail(
+            f"pdn_test has {n_sites} decap site(s); placement |Z(f)| "
+            "needs at least two VCC vias"
+        )
+    ic = board.ic_power_pin
+    assert ic is not None
+    nearest_order = sorted(
+        range(n_sites),
+        key=lambda i: hypot(
+            board.decap_sites[i].x_m - ic.x_m,
+            board.decap_sites[i].y_m - ic.y_m,
+        ),
+    )
+    sites_near = [() for _ in range(n_sites)]
+    sites_far = [() for _ in range(n_sites)]
+    sites_near[nearest_order[0]] = (DECAP_100N_0402,)
+    sites_far[nearest_order[-1]] = (DECAP_100N_0402,)
+    _freq_near, z_near = plane_impedance(board, tuple(sites_near))
+    _freq_far, z_far = plane_impedance(board, tuple(sites_far))
+    assert np.all(np.isfinite(z_near))
+    assert np.all(np.isfinite(z_far))
+    assert not np.allclose(z_near, z_far)
+
+
 def test_write_optimize_artifacts_pareto_png(tmp_path: Path) -> None:
     winner = (DECAP_100N_0402, DECAP_1U_0603)
     points = (
@@ -290,6 +347,12 @@ def test_optimize_decap_bom_spice_and_plane(tmp_path: Path) -> None:
     assert len(result.placement_site_indices) == len(result.stuffing)
     assert result.plane_peak_z_ohm is not None
     assert np.isfinite(result.plane_peak_z_ohm)
+    assert result.plane_peak_z_ohm == pytest.approx(result.peak_z_after_ohm)
+    assert result.artifacts["z_2port_png"].is_file()
+    assert result.artifacts["droop_png"].is_file()
+    assert result.artifacts["z_2port_png"].parent == tmp_path
+    assert result.artifacts["droop_png"].parent == tmp_path
+    # spice_peak_z_* is the 2-port check; it may differ from plane peak_z_*.
     assert result.spice_peak_z_before_ohm is not None
     assert result.spice_peak_z_after_ohm is not None
     assert np.isfinite(result.spice_peak_z_before_ohm)
