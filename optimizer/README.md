@@ -1,18 +1,23 @@
 # optimizer
 
-Phase 4: search a discrete MLCC BOM to minimize peak |Z(f)| under a cost cap.
+Phase 4/5: search a discrete MLCC BOM and via placement to minimize plane peak
+|Z(f)| under a cost cap.
 
 This package does **not** import CSXCAD, openEMS, or `pcbnew`, and it does **not**
-put FDTD in the inner loop. Cached Touchstone (`.s2p`) in; openEMS remains the
-validator. Generate `results/board.s2p` with `python run_pipeline.py --board ...`
-first.
+put FDTD or ngspice in the inner loop. The inner loop is `search_plane_grid`
+(fast cavity plane on `boards/pdn_test.kicad_pcb`). Cached Touchstone (`.s2p`)
+is used only for an optional post-search 2-port SPICE *check* of the plane
+winner; it does not pick the BOM. Missing `.s2p` or ngspice skips that check;
+plane artifacts still write. Generate `results/board.s2p` with
+`python run_pipeline.py --board ...` first if you want the check.
 
 ## Objective
 
 Peak |Z(f)| over 100 kHz–1 GHz (`FMIN_HZ` = 1e5, `FMAX_HZ` = 1e9).
-`optimizer.objective.peak_abs_z` is pure NumPy on `DroopResult.z_ohm` and
-`DroopResult.freq_hz` from `spice_models.simulate_droop` when ngspice is
-present — it does not parse wrdata. `z_ohm` may be complex (`np.abs`).
+`optimizer.objective.peak_abs_z` is pure NumPy on caller-supplied `z_ohm` and
+`freq_hz` — plane `Z_ic` from `plane_impedance` in the inner loop, or
+`DroopResult` arrays from the optional 2-port check. It does not parse wrdata
+and does not require ngspice. `z_ohm` may be complex (`np.abs`).
 The band mask is inclusive. No in-band samples raises `ValueError`.
 
 ## Z_target
@@ -33,7 +38,9 @@ fake a hit.
 `f_cross_hz` is the lowest in-band sample frequency where |Z| > Z_target.
 `None` / “met in-band” if no in-band sample violates. `peak_abs_z_freq` is
 the frequency of the in-band peak |Z| (lowest f on ties). Both operate on
-the caller’s `freq_hz` / `z_ohm` (no re-interpolation).
+the caller’s `freq_hz` / `z_ohm` (no re-interpolation). After the search,
+`optimize_decap_bom` reports `f_cross_hz` / `peak_z_after_freq_hz` from the
+winner’s plane `Z_ic`.
 
 ## Cost
 
@@ -52,29 +59,29 @@ $0.00. Unknown `Decap.part` strings raise `ValueError`.
 ## Grid
 
 Count/value stuffing of the three catalog parts. Placement across VCC vias is
-the Fast plane assignment below (`plane_impedance` / `assign_caps_to_sites`),
-not this grid.
+the Fast plane assignment below (`search_plane_grid` → `assign_caps_to_sites`).
 
 Catalog is `spice_models.library.DEFAULT_DECAPS` in order: `DECAP_100N_0402`,
 `DECAP_1U_0603`, `DECAP_22U_0805` (Murata 100 nF 0402, 1 µF 0603, 22 µF 0805).
 Each part may appear 0–3 times (`MAX_COUNT_PER_PART` = 3) → 4³ = 64
 candidates. Repeats get unique SPICE names via
 `dataclasses.replace(cap, name=f"{cap.name}_{i}")` with `i` starting at 1,
-because `_render_circuit` emits `R{name}` / `L{name}` / `C{name}`. Price still
-keys off `Decap.part`. Empty stuffing `(0, 0, 0)` is the before baseline.
+because `_render_circuit` emits `R{name}` / `L{name}` / `C{name}` in the
+optional 2-port check. Price still keys off `Decap.part`. Empty stuffing
+`(0, 0, 0)` is the before baseline.
 
-The inner loop is `plane_impedance` / `assign_caps_to_sites` (fast cavity
-plane, not 64× ngspice and not FDTD). Placement enumerates `M^N` assignments
-when N ≤ 5 (`ENUMERATE_MAX_CAPS`); for larger N it uses a greedy nearest-to-IC
-assignment (extras share the nearest via). Objective is min plane peak |Z|;
-the constraint is BOM cost (not `Z_target` yet). SciPy `minimize` / continuous
-C is not used.
+The inner loop is `search_plane_grid`: `enumerate_count_grid` (0–3 each, 64
+vectors) × `assign_caps_to_sites` (enumerate N ≤ 5, greedy nearest-to-IC if
+larger), scored by `plane_impedance` / `peak_abs_z`. No FDTD, no ngspice in
+the loop, no SciPy `minimize` on C. Objective is min plane peak |Z|; the
+constraint is BOM cost (not `Z_target` yet).
 
 ## Fast plane
 
-Cheap 1-cavity / spreading model for **placement** after the 2-port count/value
-search. Not a mesh, not openEMS, not CSXCAD: a handful of nodes, dense Y, NumPy
-`linalg.solve` over frequency. `plane_impedance` does not call ngspice.
+Cheap 1-cavity / spreading model for **count/value and placement** in the
+inner loop (`search_plane_grid`). Not a mesh, not openEMS, not CSXCAD: a
+handful of nodes, dense Y, NumPy `linalg.solve` over frequency.
+`plane_impedance` does not call ngspice.
 
 Port / site mapping (from `read_board`, never typed by hand):
 
@@ -124,12 +131,15 @@ sorted nearest-to-IC, first `min(N, M)` caps each get the next unused via,
 leftover caps share the nearest via. No SciPy, no FDTD. Empty stuffing is
 the bare plane+VRM (all sites empty; does not crash). The winner is the
 assignment with lowest peak `|Z_ic|` (greedy scores that single assignment).
-`optimize_decap_bom` still
-selects the BOM with the Part 4 2-port ngspice grid; if `board_path` is set it
-then stores `placement_site_indices` (parallel to `stuffing`) and
-`plane_peak_z_ohm`. `peak_z_before` / `peak_z_after` stay the 2-port SPICE
-numbers — a cached `.s2p` cannot move caps. If `board_path` is None, placement
-is left empty (no silent site search).
+
+`optimize_decap_bom` **requires** `board_path` (`boards/pdn_test.kicad_pcb`)
+and does not silently skip placement. It selects the BOM with `search_plane_grid`
+(not a 2-port ngspice grid). `peak_z_before_ohm` / `peak_z_after_ohm`
+are **plane** numbers. `spice_peak_z_*` are the optional 2-port check (`None`
+if `.s2p` or ngspice is missing). `f_cross_hz` / `peak_z_after_freq_hz` come
+from the winner’s plane `Z_ic`. Cached `.s2p` is only for that check: all
+MLCCs at extracted port 2; it cannot see other vias and does not pick the
+winner. Missing `.s2p` still writes plane plots.
 
 `plane_z_map` is a coarse peak-|Z| vs xy grid (probe node + spreading L to the
 IC, inject at the probe) for the spatial plot. Still not a mesh.
@@ -138,13 +148,14 @@ IC, inject at the probe) for the spatial plot. Still not a mesh.
 
 `--optimize` writes gitignored files under `results/`:
 
-- `z_opt.png` — before/after |Z(f)| (log-log, Z_target line) from a 2-port
-  SPICE re-sim of empty vs winning stuffing (check, not the inner loop)
-- `droop_opt.png` — before/after IC-pin transient from that same check
-- `bom_cost.txt` — part, qty, unit $, ext $
-- `z_spatial.png` — fast-plane peak |Z| vs xy when `board_path` is set
-  (IC + stuffed/empty VCC vias overlaid; not openEMS)
+- `z_opt.png` — before/after plane |Z(f)| (log-log, Z_target line) from empty
+  sites vs winning via assignment (`plane_impedance`). Not 2-port SPICE.
 - `pareto.png` — BOM cost vs plane peak |Z| for each count-vector after
   placement (feasible vs infeasible; winner marked). Fast-plane search,
   not FDTD, not 2-port SPICE. Does not claim Z_target was met.
-
+- `z_spatial.png` — fast-plane peak |Z| vs xy (IC + stuffed/empty VCC vias
+  overlaid; not openEMS)
+- `bom_cost.txt` — part, qty, unit $, ext $
+- `z_opt_2port.png` / `droop_opt.png` — 2-port check only, and only if ngspice
+  and a cached `.s2p` are both present. All caps at the extracted site. Not
+  written when the check is skipped.

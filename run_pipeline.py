@@ -42,7 +42,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--optimize",
         type=Path,
-        help="Cached Touchstone .s2p (Phase 4 BOM search). Does not run openEMS.",
+        help=(
+            "Phase 4/5 BOM search. Inner loop is the fast plane (not FDTD); "
+            "this .s2p is only for the optional 2-port check."
+        ),
     )
     parser.add_argument(
         "--decap-index",
@@ -192,7 +195,7 @@ def _run_optimize(s2p_path: Path) -> None:
     from optimizer import optimize_decap_bom
     from spice_models import ngspice_available
 
-    print(f"Phase 4 — optimize decap BOM from {s2p_path} (no openEMS)")
+    print(f"Phase 4/5 — optimize decap BOM from {s2p_path} (fast plane, no openEMS)")
     if not DEFAULT_BOARD.is_file():
         raise SystemExit(
             "boards/pdn_test.kicad_pcb not found. "
@@ -245,9 +248,18 @@ def _run_optimize(s2p_path: Path) -> None:
             else "n/a"
         )
         print(f"  placement: {placed}  (plane peak |Z| {plane_z})")
-    wrote = "  ".join(str(path) for path in result.artifacts.values())
-    if wrote:
-        print(f"  wrote {wrote}")
+    plane_keys = ("z_png", "pareto_png", "spatial_png", "bom_txt")
+    check_keys = ("z_2port_png", "droop_png")
+    plane_paths = "  ".join(
+        str(result.artifacts[key]) for key in plane_keys if key in result.artifacts
+    )
+    check_paths = "  ".join(
+        str(result.artifacts[key]) for key in check_keys if key in result.artifacts
+    )
+    if plane_paths:
+        print(f"  plane: {plane_paths}")
+    if check_paths:
+        print(f"  2-port check: {check_paths}")
 
 
 if __name__ == "__main__":
