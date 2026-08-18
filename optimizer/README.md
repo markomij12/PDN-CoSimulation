@@ -136,4 +136,7 @@ IC, inject at the probe) for the spatial plot. Still not a mesh.
 - `bom_cost.txt` — part, qty, unit $, ext $
 - `z_spatial.png` — fast-plane peak |Z| vs xy when `board_path` is set
   (IC + stuffed/empty VCC vias overlaid; not openEMS)
+- `pareto.png` — BOM cost vs plane peak |Z| for each count-vector after
+  placement (feasible vs infeasible; winner marked). Fast-plane search,
+  not FDTD, not 2-port SPICE. Does not claim Z_target was met.
 

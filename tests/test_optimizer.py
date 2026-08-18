@@ -19,7 +19,8 @@ from optimizer.plane import (
     plane_impedance,
     spreading_inductance,
 )
-from optimizer.search import enumerate_count_grid, stuffing_from_counts
+from optimizer.report import write_optimize_artifacts
+from optimizer.search import ParetoPoint, enumerate_count_grid, stuffing_from_counts
 from spice_models import ngspice_available
 from spice_models.library import (
     DECAP_100N_0402,
@@ -189,8 +190,42 @@ def test_optimize_missing_s2p_skips_2port_check(tmp_path: Path) -> None:
     assert result.spice_peak_z_after_ohm is None
     assert result.artifacts["z_png"].is_file()
     assert result.artifacts["bom_txt"].is_file()
+    assert result.artifacts["pareto_png"].is_file()
     assert "z_2port_png" not in result.artifacts
     assert "droop_png" not in result.artifacts
+
+
+def test_write_optimize_artifacts_pareto_png(tmp_path: Path) -> None:
+    winner = (DECAP_100N_0402, DECAP_1U_0603)
+    points = (
+        ParetoPoint(cost_usd=0.0, peak_z_ohm=12.0, feasible=True, stuffing=()),
+        ParetoPoint(cost_usd=0.22, peak_z_ohm=1.2, feasible=True, stuffing=winner),
+        ParetoPoint(
+            cost_usd=0.84,
+            peak_z_ohm=0.9,
+            feasible=False,
+            stuffing=_two_of_each(),
+        ),
+    )
+    artifacts = write_optimize_artifacts(
+        results_dir=tmp_path,
+        stuffing=winner,
+        cost_after_usd=0.22,
+        cost_budget_usd=0.50,
+        feasible=True,
+        z_target_ohm=50e-3,
+        before=None,
+        after=None,
+        board=None,
+        stuffing_at_sites=None,
+        pareto_points=points,
+    )
+    png = artifacts["pareto_png"]
+    assert png == tmp_path / "pareto.png"
+    assert png.is_file()
+    assert png.stat().st_size > 0
+    assert "z_2port_png" not in artifacts
+    assert "droop_png" not in artifacts
 
 
 # --- Skip if ngspice missing OR .s2p missing --------------------------------
@@ -216,8 +251,10 @@ def test_optimize_decap_bom_spice_and_plane(tmp_path: Path) -> None:
     assert result.feasible is True
     assert result.artifacts["z_png"].is_file()
     assert result.artifacts["bom_txt"].is_file()
+    assert result.artifacts["pareto_png"].is_file()
     assert result.artifacts["z_png"].parent == tmp_path
     assert result.artifacts["bom_txt"].parent == tmp_path
+    assert result.artifacts["pareto_png"].parent == tmp_path
     assert len(result.placement_site_indices) == len(result.stuffing)
     assert result.plane_peak_z_ohm is not None
     assert np.isfinite(result.plane_peak_z_ohm)

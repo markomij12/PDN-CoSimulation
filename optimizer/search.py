@@ -30,6 +30,16 @@ _N_FREQ = 81
 
 
 @dataclass(frozen=True)
+class ParetoPoint:
+    """One count-vector after placement: BOM cost vs plane peak |Z|."""
+
+    cost_usd: float
+    peak_z_ohm: float
+    feasible: bool
+    stuffing: tuple[Decap, ...]
+
+
+@dataclass(frozen=True)
 class PlaneGridResult:
     """Winner plus before/after plane peak |Z| and cost. Assembled into OptimizeResult."""
 
@@ -41,6 +51,7 @@ class PlaneGridResult:
     cost_before_usd: float
     cost_after_usd: float
     feasible: bool
+    evaluated_points: tuple[ParetoPoint, ...]
 
 
 def stuffing_from_counts(counts: tuple[int, int, int]) -> tuple[Decap, ...]:
@@ -114,6 +125,16 @@ def search_plane_grid(
     if peak_z_before is None:
         raise RuntimeError("count grid did not evaluate the empty stuffing baseline")
 
+    evaluated_points = tuple(
+        ParetoPoint(
+            cost_usd=cost,
+            peak_z_ohm=peak,
+            feasible=cost_within_budget(stuffing, cost_budget_usd),
+            stuffing=stuffing,
+        )
+        for stuffing, peak, cost, _sites, _indices in evaluated
+    )
+
     feasible_rows = [
         row for row in evaluated if cost_within_budget(row[0], cost_budget_usd)
     ]
@@ -137,4 +158,5 @@ def search_plane_grid(
         cost_before_usd=bom_cost(empty),
         cost_after_usd=cost_after,
         feasible=feasible,
+        evaluated_points=evaluated_points,
     )

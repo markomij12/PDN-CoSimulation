@@ -145,6 +145,8 @@ def optimize_decap_bom(
         after=after,
         board=board,
         stuffing_at_sites=outcome.stuffing_at_sites,
+        pareto_points=outcome.evaluated_points,
+        peak_z_after_ohm=outcome.peak_z_after_ohm,
     )
 
     return OptimizeResult(

@@ -1,11 +1,12 @@
-"""Before/after |Z(f)|, BOM cost table, and optional spatial |Z| map.
+"""Before/after |Z(f)|, BOM cost table, Pareto, and optional spatial |Z| map.
 
 Writes gitignored files under ``results/``. Does not import CSXCAD, openEMS, or
 pcbnew, and does not launch FDTD. ``z_opt.png`` is the fast-plane overlay
 (empty sites vs placed winner from ``plane_impedance``), not 2-port SPICE.
-The optional 2-port ngspice check writes ``z_opt_2port.png`` and
-``droop_opt.png`` only when both DroopResults are present; it does not pick
-the winner.
+``pareto.png`` is BOM cost vs plane peak |Z| for each count-vector after
+placement (fast-plane search, not FDTD, not 2-port SPICE). The optional
+2-port ngspice check writes ``z_opt_2port.png`` and ``droop_opt.png`` only
+when both DroopResults are present; it does not pick the winner.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from spice_models.library import Decap
 
 from optimizer.cost import unit_price_usd
 from optimizer.plane import plane_impedance, plane_z_map
+from optimizer.search import ParetoPoint
 
 
 def write_optimize_artifacts(
@@ -40,8 +42,10 @@ def write_optimize_artifacts(
     after: DroopResult | None,
     board: BoardGeometry | None,
     stuffing_at_sites: Sequence[Sequence[Decap]] | None,
+    pareto_points: Sequence[ParetoPoint] = (),
+    peak_z_after_ohm: float | None = None,
 ) -> dict[str, Path]:
-    """Write plane |Z(f)| overlay, cost table, optional 2-port check plots, spatial map."""
+    """Write plane |Z(f)| overlay, cost table, Pareto, optional 2-port check, spatial map."""
     out = Path(results_dir)
     out.mkdir(parents=True, exist_ok=True)
     artifacts: dict[str, Path] = {}
@@ -69,6 +73,15 @@ def write_optimize_artifacts(
     if board is not None and stuffing_at_sites is not None:
         artifacts["spatial_png"] = _plot_spatial(
             board, stuffing_at_sites, out / "z_spatial.png"
+        )
+    if pareto_points:
+        artifacts["pareto_png"] = _plot_pareto(
+            pareto_points,
+            winner_stuffing=stuffing,
+            cost_after_usd=cost_after_usd,
+            peak_z_after_ohm=peak_z_after_ohm,
+            z_target_ohm=z_target_ohm,
+            path=out / "pareto.png",
         )
     return artifacts
 
@@ -115,6 +128,111 @@ def _write_bom_cost(
     path.write_text(
         format_bom_cost_table(stuffing, cost_after_usd, cost_budget_usd, feasible)
     )
+    return path
+
+
+def _winner_pareto_point(
+    points: Sequence[ParetoPoint],
+    winner_stuffing: Sequence[Decap],
+    cost_after_usd: float,
+    peak_z_after_ohm: float | None,
+) -> ParetoPoint | None:
+    stuffing = tuple(winner_stuffing)
+    for point in points:
+        if point.stuffing == stuffing:
+            return point
+    if peak_z_after_ohm is None:
+        return None
+    for point in points:
+        if point.cost_usd == cost_after_usd and point.peak_z_ohm == peak_z_after_ohm:
+            return point
+    return None
+
+
+def _plot_pareto(
+    points: Sequence[ParetoPoint],
+    *,
+    winner_stuffing: Sequence[Decap],
+    cost_after_usd: float,
+    peak_z_after_ohm: float | None,
+    z_target_ohm: float,
+    path: Path,
+) -> Path:
+    winner = _winner_pareto_point(
+        points, winner_stuffing, cost_after_usd, peak_z_after_ohm
+    )
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
+    feas_x: list[float] = []
+    feas_y: list[float] = []
+    infeas_x: list[float] = []
+    infeas_y: list[float] = []
+    for point in points:
+        if winner is not None and (
+            point.stuffing == winner.stuffing
+            and point.cost_usd == winner.cost_usd
+            and point.peak_z_ohm == winner.peak_z_ohm
+        ):
+            continue
+        if point.feasible:
+            feas_x.append(point.cost_usd)
+            feas_y.append(point.peak_z_ohm)
+        else:
+            infeas_x.append(point.cost_usd)
+            infeas_y.append(point.peak_z_ohm)
+    if feas_x:
+        ax.scatter(
+            feas_x,
+            feas_y,
+            color="#1f4e79",
+            s=36,
+            zorder=2,
+            label="feasible (cost ≤ budget)",
+        )
+    if infeas_x:
+        ax.scatter(
+            infeas_x,
+            infeas_y,
+            color="#888888",
+            s=36,
+            zorder=2,
+            label="infeasible (over budget)",
+        )
+    if winner is not None:
+        ax.scatter(
+            [winner.cost_usd],
+            [winner.peak_z_ohm],
+            marker="*",
+            s=220,
+            color="#c44",
+            zorder=4,
+            label="winner",
+        )
+        ax.annotate(
+            "winner",
+            (winner.cost_usd, winner.peak_z_ohm),
+            textcoords="offset points",
+            xytext=(8, 8),
+            fontsize=9,
+            color="#c44",
+        )
+    ax.axhline(
+        z_target_ohm,
+        color="#c44",
+        ls="--",
+        lw=0.9,
+        label=f"Z_target {z_target_ohm * 1e3:.0f} mΩ",
+    )
+    peaks = [point.peak_z_ohm for point in points if point.peak_z_ohm > 0]
+    if peaks and max(peaks) / min(peaks) >= 10:
+        ax.set_yscale("log")
+    ax.set_xlabel("BOM cost ($)")
+    ax.set_ylabel("peak |Z| (Ω)")
+    ax.set_title("Fast-plane search: BOM cost vs peak |Z| (not FDTD, not 2-port SPICE)")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
     return path
 
 
