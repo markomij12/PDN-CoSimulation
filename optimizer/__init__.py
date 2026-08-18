@@ -61,7 +61,7 @@ def optimize_decap_bom(
     fmax_hz: float = 1e9,
     board_path: Path | str | None = None,
     results_dir: Path | str = Path("results"),
-    max_count: int = 2,
+    max_count: int = 3,
 ) -> OptimizeResult:
     """Search a discrete MLCC BOM and placement to minimize plane peak |Z(f)|.
 
@@ -71,8 +71,8 @@ def optimize_decap_bom(
     optional 2-port SPICE check re-sims empty vs winner stuffing at the
     extracted site (needs cached `.s2p` and ngspice). Missing `.s2p` or
     ngspice skips that check; plane plots still write. The check does not
-    re-rank the winner. `max_count` is 0–N of each catalog part (default 2
-    → 27 stuffing vectors).
+    re-rank the winner. `max_count` is 0–N of each catalog part (default 3
+    → 64 stuffing vectors).
     """
     if board_path is None:
         raise ValueError(

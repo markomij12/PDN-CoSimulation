@@ -27,6 +27,7 @@ DEFAULT_VIA_RADIUS_M = 0.15e-3
 _FMIN_HZ = 1e5
 _FMAX_HZ = 1e9
 _N_FREQ = 81
+ENUMERATE_MAX_CAPS = 5
 
 
 def plane_capacitance(board: BoardGeometry) -> float:
@@ -122,24 +123,41 @@ def assign_caps_to_sites(
     stuffing: Sequence[Decap],
     freq_hz: np.ndarray | None = None,
 ) -> tuple[tuple[tuple[Decap, ...], ...], int, float]:
-    """Enumerate assignments of each cap to one of M ``decap_sites`` (M^N).
+    """Place each cap on one of M ``decap_sites``. No SciPy, no FDTD.
 
-    Pick the assignment with lowest peak |Z_ic| from ``plane_impedance``.
-    Return ``(stuffing_at_sites, unused_site_count, peak_z)``. If stuffing is
-    empty, all sites empty and peak |Z| is the bare plane+VRM.
+    When ``len(stuffing)`` ≤ ``ENUMERATE_MAX_CAPS`` (5), including empty:
+    enumerate every assignment (``M^N``) and pick the lowest peak ``|Z_ic|``
+    from ``plane_impedance``. When N is larger: greedy nearest-to-IC — sort
+    sites by Euclidean distance to the IC (nearest first; stable on ties),
+    first ``min(N, M)`` caps each get the next-nearest unused via, leftover
+    caps (N > M) all share the nearest via. Score that single assignment
+    with ``plane_impedance`` and max ``|Z|``.
+
+    Return ``(stuffing_at_sites, unused_site_count, peak_z)``. Empty stuffing
+    is all sites empty; peak |Z| is the bare plane+VRM.
     """
     n_sites = len(board.decap_sites)
     n_caps = len(stuffing)
     if n_caps > 0 and n_sites == 0:
         raise ValueError("BoardGeometry has no decap sites to assign capacitors to")
     freq_hz = _freq_hz(freq_hz)
+    if n_caps <= ENUMERATE_MAX_CAPS:
+        return _enumerate_caps_to_sites(board, stuffing, freq_hz)
+    return _greedy_caps_to_sites(board, stuffing, freq_hz)
 
+
+def _enumerate_caps_to_sites(
+    board: BoardGeometry,
+    stuffing: Sequence[Decap],
+    freq_hz: np.ndarray,
+) -> tuple[tuple[tuple[Decap, ...], ...], int, float]:
+    n_sites = len(board.decap_sites)
+    n_caps = len(stuffing)
     best_peak: float | None = None
     best_sites: tuple[tuple[Decap, ...], ...] | None = None
     for assignment in itertools.product(range(n_sites), repeat=n_caps):
         sites = _caps_by_site(stuffing, assignment, n_sites)
-        _freq, z_ic = plane_impedance(board, sites, freq_hz)
-        peak = float(np.max(np.abs(z_ic)))
+        peak = _peak_abs_z_ic(board, sites, freq_hz)
         if best_peak is None or peak < best_peak:
             best_peak = peak
             best_sites = sites
@@ -149,6 +167,39 @@ def assign_caps_to_sites(
 
     unused = sum(1 for caps in best_sites if len(caps) == 0)
     return best_sites, unused, best_peak
+
+
+def _greedy_caps_to_sites(
+    board: BoardGeometry,
+    stuffing: Sequence[Decap],
+    freq_hz: np.ndarray,
+) -> tuple[tuple[tuple[Decap, ...], ...], int, float]:
+    n_sites = len(board.decap_sites)
+    n_caps = len(stuffing)
+    nearest_order = _sites_nearest_to_ic(board)
+    n_unique = min(n_caps, n_sites)
+    assignment = [nearest_order[k] for k in range(n_unique)]
+    assignment.extend([nearest_order[0]] * (n_caps - n_unique))
+    sites = _caps_by_site(stuffing, tuple(assignment), n_sites)
+    peak = _peak_abs_z_ic(board, sites, freq_hz)
+    unused = sum(1 for caps in sites if len(caps) == 0)
+    return sites, unused, peak
+
+
+def _sites_nearest_to_ic(board: BoardGeometry) -> tuple[int, ...]:
+    ic = _ic_pin(board)
+    indexed = list(enumerate(board.decap_sites))
+    indexed.sort(key=lambda item: hypot(item[1].x_m - ic.x_m, item[1].y_m - ic.y_m))
+    return tuple(i for i, _site in indexed)
+
+
+def _peak_abs_z_ic(
+    board: BoardGeometry,
+    sites: Sequence[Sequence[Decap]],
+    freq_hz: np.ndarray,
+) -> float:
+    _freq, z_ic = plane_impedance(board, sites, freq_hz)
+    return float(np.max(np.abs(z_ic)))
 
 
 def placement_site_indices(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
+from math import hypot
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,7 @@ from optimizer import optimize_decap_bom
 from optimizer.cost import bom_cost, cost_within_budget, unit_price_usd
 from optimizer.objective import f_cross_hz, peak_abs_z, peak_abs_z_freq
 from optimizer.plane import (
+    ENUMERATE_MAX_CAPS,
     assign_caps_to_sites,
     plane_capacitance,
     plane_impedance,
@@ -77,9 +79,9 @@ def test_unknown_decap_part_raises() -> None:
         unit_price_usd(unknown)
 
 
-def test_enumerate_count_grid_default_is_27() -> None:
+def test_enumerate_count_grid_default_is_64() -> None:
     candidates = enumerate_count_grid()
-    assert len(candidates) == 27
+    assert len(candidates) == 64
     assert () in candidates
 
 
@@ -144,6 +146,36 @@ def test_fast_plane_no_fdtd() -> None:
     l0 = spreading_inductance(0.0, height_m)
     assert np.isfinite(l0)
     assert l0 > 0
+
+
+def test_greedy_assignment_six_caps_uses_nearest_via() -> None:
+    """N > ENUMERATE_MAX_CAPS: deterministic greedy, extras share nearest via."""
+    board = read_board(BOARD_PATH)
+    stuffing = tuple(replace(DECAP_100N_0402, name=f"C100n_g{i}") for i in range(6))
+    assert len(stuffing) > ENUMERATE_MAX_CAPS
+    sites_a, unused_a, peak_a = assign_caps_to_sites(board, stuffing)
+    sites_b, unused_b, peak_b = assign_caps_to_sites(board, stuffing)
+    assert sites_a == sites_b
+    assert unused_a == unused_b
+    assert peak_a == peak_b
+    assert np.isfinite(peak_a)
+
+    ic = board.ic_power_pin
+    assert ic is not None
+    nearest_order = sorted(
+        range(len(board.decap_sites)),
+        key=lambda i: hypot(
+            board.decap_sites[i].x_m - ic.x_m,
+            board.decap_sites[i].y_m - ic.y_m,
+        ),
+    )
+    counts = [len(caps) for caps in sites_a]
+    n_sites = len(board.decap_sites)
+    n_extra = len(stuffing) - n_sites
+    assert counts[nearest_order[0]] == 1 + n_extra
+    for site_i in nearest_order[1:]:
+        assert counts[site_i] == 1
+    assert unused_a == 0
 
 
 def test_optimizer_does_not_import_openems_or_pcbnew() -> None:

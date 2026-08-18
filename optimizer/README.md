@@ -51,20 +51,24 @@ $0.00. Unknown `Decap.part` strings raise `ValueError`.
 
 ## Grid
 
-Count/value stuffing at the single extracted 2-port site (Touchstone port 2).
-Placement across VCC vias is the Fast plane assignment below, not this grid.
+Count/value stuffing of the three catalog parts. Placement across VCC vias is
+the Fast plane assignment below (`plane_impedance` / `assign_caps_to_sites`),
+not this grid.
 
 Catalog is `spice_models.library.DEFAULT_DECAPS` in order: `DECAP_100N_0402`,
 `DECAP_1U_0603`, `DECAP_22U_0805` (Murata 100 nF 0402, 1 µF 0603, 22 µF 0805).
-Each part may appear 0, 1, or 2 times (`MAX_COUNT_PER_PART` = 2) → 3³ = 27
+Each part may appear 0–3 times (`MAX_COUNT_PER_PART` = 3) → 4³ = 64
 candidates. Repeats get unique SPICE names via
 `dataclasses.replace(cap, name=f"{cap.name}_{i}")` with `i` starting at 1,
 because `_render_circuit` emits `R{name}` / `L{name}` / `C{name}`. Price still
 keys off `Decap.part`. Empty stuffing `(0, 0, 0)` is the before baseline.
 
-The inner loop is `from_sparams` + `simulate_droop` + `peak_abs_z` (ngspice, not
-FDTD). Objective is min peak |Z|; the constraint is BOM cost (not `Z_target`
-yet). SciPy `minimize` / continuous C is deferred.
+The inner loop is `plane_impedance` / `assign_caps_to_sites` (fast cavity
+plane, not 64× ngspice and not FDTD). Placement enumerates `M^N` assignments
+when N ≤ 5 (`ENUMERATE_MAX_CAPS`); for larger N it uses a greedy nearest-to-IC
+assignment (extras share the nearest via). Objective is min plane peak |Z|;
+the constraint is BOM cost (not `Z_target` yet). SciPy `minimize` / continuous
+C is not used.
 
 ## Fast plane
 
@@ -114,9 +118,13 @@ Default frequency grid if the caller omits one: `logspace` 100 kHz–1 GHz,
 81 points.
 
 `assign_caps_to_sites` enumerates assignments of each of N caps to one of M
-sites (`M^N`; pdn_test M = 3, N typically ≤ 6 → at most 729 NumPy solves).
-Empty stuffing is the bare plane+VRM (all sites empty; does not crash). The
-winner is the assignment with lowest peak `|Z_ic|`. `optimize_decap_bom` still
+sites when N ≤ 5 (`ENUMERATE_MAX_CAPS`; `M^N`; pdn_test M = 3 → at most
+3^5 = 243 NumPy solves). For N > 5 it uses a deterministic greedy: sites
+sorted nearest-to-IC, first `min(N, M)` caps each get the next unused via,
+leftover caps share the nearest via. No SciPy, no FDTD. Empty stuffing is
+the bare plane+VRM (all sites empty; does not crash). The winner is the
+assignment with lowest peak `|Z_ic|` (greedy scores that single assignment).
+`optimize_decap_bom` still
 selects the BOM with the Part 4 2-port ngspice grid; if `board_path` is set it
 then stores `placement_site_indices` (parallel to `stuffing`) and
 `plane_peak_z_ohm`. `peak_z_before` / `peak_z_after` stay the 2-port SPICE

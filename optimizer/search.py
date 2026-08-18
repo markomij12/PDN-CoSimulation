@@ -1,6 +1,6 @@
 """Discrete count/value and placement search on the fast cavity plane.
 
-0–2 of each catalog MLCC assigned across ``BoardGeometry.decap_sites``. Does
+0–3 of each catalog MLCC assigned across ``BoardGeometry.decap_sites``. Does
 not import CSXCAD, openEMS, or pcbnew, and does not call FDTD or ngspice.
 The inner loop is ``plane_impedance`` / ``peak_abs_z``; cached `.s2p` is not
 regenerated per candidate. Repeats get unique ``Decap.name`` values so a
@@ -22,7 +22,7 @@ from optimizer.cost import bom_cost, cost_within_budget
 from optimizer.objective import peak_abs_z
 from optimizer.plane import assign_caps_to_sites, plane_impedance, placement_site_indices
 
-MAX_COUNT_PER_PART = 2
+MAX_COUNT_PER_PART = 3
 LIBRARY_PARTS: tuple[Decap, ...] = DEFAULT_DECAPS
 
 _EMPTY_COUNTS = (0, 0, 0)
@@ -93,11 +93,12 @@ def search_plane_grid(
 ) -> PlaneGridResult:
     """Evaluate stuffing × site assignment; pick min plane peak |Z| under the cost cap.
 
-    For each count-grid stuffing, ``assign_caps_to_sites`` enumerates placement
-    on ``board.decap_sites``. Score is ``peak_abs_z`` of ``plane_impedance``
-    ``Z_ic`` over ``fmin_hz``–``fmax_hz``. Does not call ngspice, FDTD, or
-    ``from_sparams``. ``max_count`` defaults to 2 (27 stuffing vectors); tests
-    may pass 1 to keep the wall time in seconds.
+    For each count-grid stuffing, ``assign_caps_to_sites`` places caps on
+    ``board.decap_sites`` (enumerate when N ≤ 5, greedy nearest-to-IC when
+    larger). Score is ``peak_abs_z`` of ``plane_impedance`` ``Z_ic`` over
+    ``fmin_hz``–``fmax_hz``. Does not call ngspice, FDTD, or ``from_sparams``.
+    ``max_count`` defaults to 3 (64 stuffing vectors); tests may pass 1 to
+    keep the wall time in seconds.
     """
     empty = stuffing_from_counts(_EMPTY_COUNTS)
     freq_hz = np.logspace(np.log10(fmin_hz), np.log10(fmax_hz), _N_FREQ)
