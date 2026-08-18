@@ -28,14 +28,18 @@ class OptimizeResult:
     """BOM stuffing plus before/after peak |Z| and cost. Artifacts under results/.
 
     ``peak_z_before_ohm`` / ``peak_z_after_ohm`` are fast-plane peak |Z_ic|,
-    not 2-port SPICE. ``plane_peak_z_ohm`` is the winner's plane peak (same as
-    ``peak_z_after_ohm``). ``spice_peak_z_*`` are the optional 2-port check
-    (None when `.s2p` or ngspice is missing).
+    not 2-port SPICE. ``peak_z_after_freq_hz`` is the frequency of the
+    winner's plane peak |Z|. ``f_cross_hz`` is the lowest in-band f where
+    |Z| > Z_target (``None`` = met in-band). ``plane_peak_z_ohm`` is the
+    winner's plane peak (same as ``peak_z_after_ohm``). ``spice_peak_z_*``
+    are the optional 2-port check (None when `.s2p` or ngspice is missing).
     """
 
     stuffing: tuple[Decap, ...]
     peak_z_before_ohm: float
     peak_z_after_ohm: float
+    peak_z_after_freq_hz: float
+    f_cross_hz: float | None
     cost_before_usd: float
     cost_after_usd: float
     cost_budget_usd: float
@@ -79,7 +83,8 @@ def optimize_decap_bom(
 
     # Lazy import: search.py imports optimizer.cost / objective / plane, not this module.
     from em_extraction.kicad_reader import read_board
-    from optimizer.objective import peak_abs_z
+    from optimizer.objective import f_cross_hz, peak_abs_z, peak_abs_z_freq
+    from optimizer.plane import plane_impedance
     from optimizer.report import write_optimize_artifacts
     from optimizer.search import search_plane_grid
     from spice_models import MissingS2pError, from_sparams, simulate_droop
@@ -121,6 +126,14 @@ def optimize_decap_bom(
         spice_peak_z_before_ohm = None
         spice_peak_z_after_ohm = None
 
+    freq_winner, z_winner = plane_impedance(board, outcome.stuffing_at_sites)
+    peak_z_after_freq_hz = peak_abs_z_freq(
+        z_winner, freq_winner, fmin_hz, fmax_hz
+    )
+    cross_hz = f_cross_hz(
+        z_winner, freq_winner, z_target_ohm, fmin_hz, fmax_hz
+    )
+
     artifacts = write_optimize_artifacts(
         results_dir=Path(results_dir),
         stuffing=outcome.stuffing,
@@ -138,6 +151,8 @@ def optimize_decap_bom(
         stuffing=outcome.stuffing,
         peak_z_before_ohm=outcome.peak_z_before_ohm,
         peak_z_after_ohm=outcome.peak_z_after_ohm,
+        peak_z_after_freq_hz=peak_z_after_freq_hz,
+        f_cross_hz=cross_hz,
         cost_before_usd=outcome.cost_before_usd,
         cost_after_usd=outcome.cost_after_usd,
         cost_budget_usd=cost_budget_usd,

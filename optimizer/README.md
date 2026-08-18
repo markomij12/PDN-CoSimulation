@@ -21,7 +21,19 @@ Default `Z_TARGET_OHM` = 50 mΩ, defined in `optimizer/objective.py` so the
 objective module does not import `spice_models.simulate` (ngspice /
 matplotlib). Matches `spice_models.simulate.Z_TARGET_OHM` and the
 `z_pdn.png` reference line. Tighter than 50 mV / 0.5 A = 100 mΩ
-(equivalent to a 25 mV budget at the Phase 3 0.5 A step).
+(equivalent to a 25 mV budget at the Phase 3 0.5 A step). Do not change
+this default to make a later plot look like a hit.
+
+50 mΩ to 1 GHz is **not reachable** with `DEFAULT_VRM.l_out_h` = 2 nH:
+ωL = 2π f L ≈ 12.6 Ω at 1 GHz (≈ 1.26 Ω at 100 MHz; at 100 kHz ωL ≈ 1.3 mΩ
+so the floor is R_out = 10 mΩ). The miss is mostly VRM inductance plus ESL,
+not “need more 22 µF”. Do not add catalog SKUs or raise the $0.50 cap to
+fake a hit.
+
+`f_cross_hz` is the lowest in-band sample frequency where |Z| > Z_target.
+`None` / “met in-band” if no in-band sample violates. `peak_abs_z_freq` is
+the frequency of the in-band peak |Z| (lowest f on ties). Both operate on
+the caller’s `freq_hz` / `z_ohm` (no re-interpolation).
 
 ## Cost
 

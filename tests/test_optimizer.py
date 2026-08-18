@@ -12,7 +12,7 @@ import pytest
 from em_extraction.kicad_reader import read_board
 from optimizer import optimize_decap_bom
 from optimizer.cost import bom_cost, cost_within_budget, unit_price_usd
-from optimizer.objective import peak_abs_z
+from optimizer.objective import f_cross_hz, peak_abs_z, peak_abs_z_freq
 from optimizer.plane import (
     assign_caps_to_sites,
     plane_capacitance,
@@ -102,6 +102,25 @@ def test_peak_abs_z_in_band_and_complex() -> None:
     z_complex = np.array([3 + 4j, 0 + 1j])
     assert peak_abs_z(z_complex, np.array([1e5, 1e6])) == pytest.approx(5.0)
 
+    assert peak_abs_z_freq(z_ohm, freq_hz) == pytest.approx(1e6)
+    tied = np.array([0.1, 0.5, 0.5, 0.2])
+    tied_f = np.array([1e5, 2e5, 3e5, 1e6])
+    assert peak_abs_z_freq(tied, tied_f) == pytest.approx(2e5)
+    with pytest.raises(ValueError):
+        peak_abs_z_freq(np.array([1.0, 2.0]), np.array([1.0, 10.0]))
+
+
+def test_f_cross_hz_met_or_lowest_violation() -> None:
+    freq_hz = np.array([1e4, 1e5, 1e6, 1e9, 2e9])
+    below = np.array([1.0, 0.02, 0.03, 0.04, 9.0])
+    assert f_cross_hz(below, freq_hz) is None
+
+    later = np.array([1.0, 0.02, 0.06, 0.08, 9.0])
+    assert f_cross_hz(later, freq_hz) == pytest.approx(1e6)
+
+    with pytest.raises(ValueError):
+        f_cross_hz(np.array([1.0, 2.0]), np.array([1.0, 10.0]))
+
 
 def test_fast_plane_no_fdtd() -> None:
     board = read_board(BOARD_PATH)
@@ -164,6 +183,8 @@ def test_optimize_missing_s2p_skips_2port_check(tmp_path: Path) -> None:
     )
     assert np.isfinite(result.peak_z_before_ohm)
     assert np.isfinite(result.peak_z_after_ohm)
+    assert np.isfinite(result.peak_z_after_freq_hz)
+    assert result.f_cross_hz is None or np.isfinite(result.f_cross_hz)
     assert result.spice_peak_z_before_ohm is None
     assert result.spice_peak_z_after_ohm is None
     assert result.artifacts["z_png"].is_file()

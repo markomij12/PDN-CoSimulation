@@ -207,6 +207,14 @@ def _run_optimize(s2p_path: Path) -> None:
         f"  peak |Z| {result.peak_z_before_ohm:.4g} Ω → {result.peak_z_after_ohm:.4g} Ω "
         f"(fast plane, 100 kHz–1 GHz); Z_target={result.z_target_ohm * 1e3:.0f} mΩ"
     )
+    cross = (
+        "met in-band"
+        if result.f_cross_hz is None
+        else f"f_cross={result.f_cross_hz:.4g} Hz"
+    )
+    print(
+        f"  peak |Z| after at {result.peak_z_after_freq_hz:.4g} Hz; {cross}"
+    )
     if (
         result.spice_peak_z_before_ohm is not None
         and result.spice_peak_z_after_ohm is not None
