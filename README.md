@@ -1,139 +1,154 @@
 # PDN Co-Simulation
 
-Python pipeline for PCB **power delivery network** (PDN) work: take a layout, extract electromagnetic parasitics, run SPICE, and optimize decoupling capacitors against a target impedance curve.
+Automated PDN pipeline: layout → EM extract → SPICE → optimizer → report.
 
-This is the open-source version of what SI/PI teams do with HFSS/SIwave + Cadence. It directly extends PDN simulation work at Endura.
+**Status:** Phase 1–5 are on this tree. openEMS is the **validator** (mesh/ports), not the inner-loop extractor. `--spice` and `--optimize` do not launch FDTD.
 
-**Status:** Phase 1–4 are on this tree. openEMS is the **validator** (mesh/ports), not the inner-loop extractor. Phase 3 is SPICE from cached `.s2p` — it does not launch FDTD. Phase 4 searches a discrete MLCC BOM from that same cached `.s2p`.
+## Problem
 
-## Phase 1 — EM extraction baseline
+A digital IC’s power pins need a low impedance from DC through the switching band. If |Z(f)| at the pin is too high, a current step becomes voltage droop — bounce, timing margin, sometimes EMI. “More capacitance” is the wrong lever: the number is the plane pair, via spreading, VRM inductance, and MLCC ESR/ESL together, and it moves with frequency.
 
-Validation gate: mesh a **simple parallel-plate pair** in openEMS, extract 2-port S-parameters, and compare S11/S21 to the analytical transmission-line formula. If they disagree by more than a few percent, the mesh or ports are wrong — do not move on.
+SI/PI teams usually extract the power/ground cavity in HFSS or SIwave, drop the Touchstone into Cadence (or another SPICE), then iterate decoupling until |Z| and time-domain droop look acceptable. That loop is slow when a 3D field solve sits inside every capacitor guess.
 
-The plate is a **solver-validation geometry**, not a PDN. A realistic power/ground pair is wide and thin (Z0 ~ 1 Ω); S-parameters against 50 Ω are poorly conditioned and a bad first test. Defaults are a thick, narrower plate (10 mm × 1.6 mm FR-4, Z0 ~ 28 Ω) so the FDTD vs closed-form check is well-conditioned. The mesh uses PMC sidewalls (no-fringing, matching the Z0 formula) and stops the plates at the lumped ports so the guide does not continue into PML. A 4-layer KiCad test board is in `boards/pdn_test.kicad_pcb` (Phase 2).
+## Endura
 
-## Decision: openEMS is the validator
+This repo continues PDN simulation work started at Endura. The commercial stack for that job is HFSS/SIwave plus Cadence; here the same layout → extract → SPICE → decap-search thread is scripted on an open solver stack so the loop is one command, not a GUI session.
 
-FDTD proved the mesh and lumped ports (Phase 1 analytical gate; Phase 2 board power-conservation smoke). A 100 kHz–1 GHz PDN sweep is an awkward time-domain problem, so **do not put openEMS inside the SPICE or optimizer loop**.
+## Architecture
 
-- **Phase 3+ consume cached Touchstone** (`results/board.s2p`, regenerated only when the layout changes).
-- A fast plane / cavity model drives Phase 4 placement; FDTD remains a spot-check, not the inner loop.
-- `python run_pipeline.py` (no `--board`) still does not auto-run FDTD. `--board` may run FDTD once to refresh `.s2p`; `--spice` and `--optimize` must not.
+openEMS is the **validator**, not the inner-loop extractor. A 100 kHz–1 GHz PDN sweep is an awkward FDTD problem, so `--optimize` (and `--spice`) must not launch it. `--board` may run FDTD once to refresh a cached Touchstone when the layout changes.
 
-## Stack
+```mermaid
+flowchart LR
+  pcb["KiCad .kicad_pcb"] --> fdtd["openEMS validator"]
+  fdtd --> s2p["cached results/board.s2p"]
+  pcb --> plane["fast cavity plane + discrete MLCC catalog grid"]
+  plane --> win["winning BOM + via assignment"]
+  s2p --> check["optional 2-port ngspice check"]
+  win --> check
+```
 
-- Python 3.11+ (NumPy, SciPy, Matplotlib, pandas, PySpice)
-- KiCad 8 — Phase 2 board files. The pipeline parses `.kicad_pcb` s-expressions in the project venv (`pcbnew` is *not* imported; it only exists in KiCad's bundled Python).
-- openEMS / CSXCAD — validator (Phase 1 plate + Phase 2 board `.s2p`), not the SPICE inner loop
-- ngspice — Phase 3 transient / AC and Phase 4 2-port search (`brew install ngspice`). The pipeline shells out to the binary; libngspice / PySpice is not required.
+- **Validator:** mesh ports, write `results/board.s2p`. Phase 1 also checks a parallel-plate coupon against a closed-form line (|S| error &lt; 5% in the excite band).
+- **Inner loop:** 1-cavity spreading plane + 0–3 of each catalog MLCC assigned to VCC vias. Not FDTD, not a 64× ngspice sweep.
+- **Optional check:** ngspice re-sims the winner on the 2-port `.s2p` (all caps at extracted port 2). That check cannot see other vias and does not re-rank the BOM.
 
-## How to run Phase 1
+`--board`, `--spice`, and `--optimize` are mutually exclusive.
+
+## How to run
+
+From the clone:
 
 ```bash
-cd /Users/markomijatovic/Projects/PDN-CoSimulation
 source .venv/bin/activate
-python run_pipeline.py
+python run_pipeline.py                              # Phase 1 plate (no FDTD unless you regenerate .s2p)
+python run_pipeline.py --board boards/pdn_test.kicad_pcb
+python run_pipeline.py --spice results/board.s2p
+python run_pipeline.py --optimize results/board.s2p  # does not launch FDTD
 pytest
 ```
 
-The project venv already has NumPy/SciPy **and** the CSXCAD/openEMS Python extensions (built against `~/opt/openEMS`).
+The project venv already has NumPy/SciPy and the CSXCAD/openEMS bindings (built against `~/opt/openEMS`).
 
-To regenerate `results/parallel_plate.s2p`:
+`pytest` always checks closed-form plate Z0 and the KiCad reader. The FDTD vs analytical |S| gate, board power-conservation smoke, board `.s2p` netlists, ngspice transients, and optimizer 2-port checks **skip** when `ngspice` or the relevant `.s2p` is missing — same as now.
+
+On macOS, SPICE needs:
 
 ```bash
-source .venv/bin/activate
+brew install ngspice
+```
+
+The pipeline shells out to the `ngspice` binary; libngspice / PySpice is not required at runtime.
+
+### `python run_pipeline.py` — Phase 1 plate
+
+Default entry: a **solver-validation geometry**, not a PDN. A realistic power/ground pair is wide and thin (Z0 ~ 1 Ω); S-parameters against 50 Ω are poorly conditioned. Defaults are a thick, narrower plate (10 mm × 1.6 mm FR-4, Z0 ~ 28 Ω) so FDTD vs the analytical transmission-line formula is well-conditioned. The mesh uses PMC sidewalls (no-fringing, matching the Z0 formula) and stops the plates at the lumped ports so the guide does not continue into PML.
+
+This command does **not** auto-run FDTD. `pytest` always checks closed-form Z0. When `results/parallel_plate.s2p` exists, it also requires |S| error &lt; **5%** in the excite band (0.5–2.5 GHz). To regenerate that Touchstone:
+
+```bash
 python -c "from pathlib import Path; from em_extraction import ParallelPlateGeometry; from em_extraction.openems_mesh import extract_sparams; extract_sparams(ParallelPlateGeometry.validation_plate(), sim_dir=Path('results/openems_parallel_plate'), output_s2p=Path('results/parallel_plate.s2p'))"
 ```
 
-`pytest` always checks closed-form Z0. The FDTD vs analytical comparison runs when that `.s2p` exists and requires |S| error < 5% in the excite band.
+### `python run_pipeline.py --board boards/pdn_test.kicad_pcb` — Phase 2 extract
 
-## How to run Phase 2 (KiCad → openEMS)
+Reads via/pad coordinates and stackup from the `.kicad_pcb` s-expression (no manual xy; `pcbnew` is not imported). Meshes the inner VCC/GND plane pair and writes `results/board.s2p` (gitignored). Port 1 is footprint `U1` on net `VCC`; port 2 is the first VCC via (`--decap-index N` selects another).
 
-Activate the project venv first (it already has CSXCAD/openEMS):
+After a layout edit in KiCad, save and rerun this command — no mesh edits. Net/footprint conventions are in `boards/README.md`.
 
-```bash
-cd /Users/markomijatovic/Projects/PDN-CoSimulation
-source .venv/bin/activate
-python run_pipeline.py --board boards/pdn_test.kicad_pcb
-pytest
-```
+`pytest` unit-tests the reader against the checked-in board (no solver). The board FDTD smoke (`|S11|²+|S21|² ≈ 1` in the excite band) runs when `results/board.s2p` exists. The Phase 1 |S| gate is unchanged.
 
-That reads via/pad coordinates and stackup from the `.kicad_pcb` (no manual xy), meshes the inner VCC/GND plane pair, and writes `results/board.s2p` (gitignored). Port 1 is footprint `U1` on net `VCC`; port 2 is the first VCC via (`--decap-index N` selects another).
+### `python run_pipeline.py --spice results/board.s2p` — Phase 3 SPICE
 
-After a layout edit in KiCad, save the board and rerun the same command — no mesh edits.
+Does **not** run openEMS. Reads the cached Touchstone, fits a lumped pi, and runs ngspice. If `results/board.s2p` is missing, the command tells you to run `--board` first; `--spice` will not refresh it.
 
-`pytest` unit-tests the reader against the checked-in board (no solver). The board FDTD smoke (`|S11|²+|S21|² ≈ 1` in the excite band) runs when `results/board.s2p` exists. The Phase 1 analytical gate is unchanged.
+Writes `results/droop.png` (IC-pin voltage vs time), `results/z_pdn.png` (|Z(f)| of the same circuit), and a short numeric summary (peak droop, settling). Port 1 = IC pin, port 2 = decap site. VRM, MLCC ESR/ESL, and the lumped 2-port fit are in `spice_models/README.md`.
 
-Net/footprint conventions are in `boards/README.md`.
+`pytest` unit-tests netlist generation from the analytical plate (always) and from `results/board.s2p` when that file exists. The transient test skips if ngspice is missing; if ngspice is present it asserts finite voltages and a measurable load-step droop (not a flat rail).
 
-## How to run Phase 3 (cached `.s2p` → ngspice)
+### `python run_pipeline.py --optimize results/board.s2p` — Phase 4/5 search
 
-Activate the project venv. SPICE does **not** run openEMS; it only reads an existing Touchstone.
+Does **not** launch FDTD. Inner loop is the fast cavity plane plus a discrete MLCC catalog grid (0–3 of each of three Murata parts, assigned across VCC vias on `boards/pdn_test.kicad_pcb`).
 
-```bash
-cd /Users/markomijatovic/Projects/PDN-CoSimulation
-source .venv/bin/activate
-python run_pipeline.py --spice results/board.s2p
-pytest
-```
+- **Missing board** (`boards/pdn_test.kicad_pcb`) is an error.
+- **Missing `.s2p`** skips the 2-port ngspice check but still searches and plots the plane. Run `--board` first if you want that check.
+- Missing ngspice skips the same 2-port check.
 
-If `results/board.s2p` is missing, the command tells you to run `--board` first. `--board` is still the way to regenerate `.s2p` after a layout change; `--spice` will not refresh it.
-
-Needs ngspice on PATH:
-
-```bash
-brew install ngspice
-```
-
-Writes `results/droop.png` (IC-pin voltage vs time), `results/z_pdn.png` (|Z(f)| of the same circuit), and a short numeric summary (peak droop, settling). Port 1 = IC pin, port 2 = decap site. VRM, MLCC ESR/ESL, and the lumped 2-port fit are documented in `spice_models/README.md`.
-
-`pytest` unit-tests netlist generation from the analytical plate (always) and from `results/board.s2p` when that file exists. The transient test skips if ngspice is missing; if ngspice is present it asserts finite voltages and a measurable load-step droop (not a flat rail). Phase 1 and 2 tests are unchanged.
-
-## How to run Phase 4 (cached `.s2p` → decap BOM search)
-
-Activate the project venv. The optimizer does **not** run openEMS; it only reads an existing Touchstone.
-
-```bash
-cd /Users/markomijatovic/Projects/PDN-CoSimulation
-source .venv/bin/activate
-python run_pipeline.py --optimize results/board.s2p
-pytest
-```
-
-If `results/board.s2p` is missing, the command tells you to run `--board` first. `--optimize` is mutually exclusive with `--board` / `--spice`.
-
-Needs ngspice on PATH for the 2-port SPICE check / count grid:
-
-```bash
-brew install ngspice
-```
-
-Writes `results/z_opt.png` (before/after |Z(f)|), `results/droop_opt.png` (before/after droop), `results/bom_cost.txt`, and `results/z_spatial.png` (fast-plane spatial map when the KiCad board is present).
-
-openEMS is the validator; the optimizer does not launch FDTD.
+The 2-port check (when both ngspice and `.s2p` exist) stuffs every winning MLCC at extracted port 2. It cannot see other vias and does not pick the winner. Artifacts are listed under Results.
 
 `pytest` skips Phase 4 ngspice / `.s2p` tests when those are missing. The Phase 1 |S| gate is unchanged.
 
+## Results
+
+Plots are gitignored. Run `--optimize` (venv on) to write them under `results/`.
+
+- **`z_opt.png`** — fast-plane |Z(f)| before (empty sites) vs after (winning via assignment). Log-log, Z_target line. Not 2-port SPICE.
+- **`pareto.png`** — peak |Z| vs BOM $ for each count-vector after placement. Feasible points (cost ≤ budget) highlighted; winner marked. Fast-plane search, not FDTD.
+- **`z_spatial.png`** — fast-plane peak |Z| vs xy, IC and stuffed/empty VCC vias overlaid. Not openEMS.
+- **`bom_cost.txt`** — part, qty, unit $, ext $, budget / feasible flag.
+- **`z_opt_2port.png`** / **`droop_opt.png`** — 2-port check only, and only if ngspice and `results/board.s2p` are both present. All caps at the extracted site.
+
+Phase 3 (`--spice`) still writes `droop.png` and `z_pdn.png` from the cached `.s2p` alone.
+
+## Honest limits
+
+- A 2-port `.s2p` cannot move caps. Placement lives on the plane model; the SPICE check parks every MLCC at port 2.
+- The plane is 1-cavity spreading (parallel-plate C plus ln spreading L to each via), not a full cavity-mode series.
+- 50 mΩ to 1 GHz is **not** claimed. `DEFAULT_VRM.l_out_h` = 2 nH → ωL ≈ 12.6 Ω at 1 GHz (≈ 1.26 Ω at 100 MHz). The high-frequency floor is VRM inductance plus ESL, not “need more 22 µF”.
+- `pdn_test` is a 30 mm × 20 mm 4-layer coupon, not a product PDN.
+- The search constraint is BOM cost (default $0.50), not Z_target. The 50 mΩ line on the plots is a reference, the same one as `z_pdn.png`. Do not read the plots as “we hit 50 mΩ”.
+
+## What I’d do with more time
+
+- N-port extract as the validator, so a SPICE check can see more than one via.
+- VNA on a fabbed coupon, compared to the same cached Touchstone / plane |Z|.
+- More catalog SKUs (values and cases), still discrete, still cost-capped.
+
+No extra modules are stubbed in this tree for those.
+
+## Stack
+
+- Python 3.11+ (NumPy, SciPy, Matplotlib, pandas, pytest). PySpice is in `requirements.txt`; the pipeline talks to the `ngspice` binary directly.
+- KiCad 8 — Phase 2 board files. The pipeline parses `.kicad_pcb` s-expressions in the project venv. **Do not import `pcbnew`** (it only exists in KiCad’s bundled Python).
+- openEMS / CSXCAD — validator (Phase 1 plate + Phase 2 `results/board.s2p`), not the SPICE or optimizer inner loop.
+- ngspice — Phase 3 transient / AC and the optional Phase 4 2-port check (`brew install ngspice`).
+
 ## System dependencies (macOS, Apple Silicon)
 
-These are **not** pip packages. On this Mac they are already installed:
+These are **not** pip packages. On a machine where the project is already set up they are installed:
 
 | Piece | Where |
 | --- | --- |
-| Homebrew | `/opt/homebrew` (`eval "$(/opt/homebrew/bin/brew shellenv)"` is in `~/.zprofile`) |
-| cmake, boost, hdf5, cgal, vtk | `brew install cmake boost hdf5 cgal vtk pkg-config` |
+| Homebrew | `/opt/homebrew` |
 | openEMS C++ | `~/opt/openEMS` (`openEMS --help` via `~/opt/openEMS/bin/openEMS`) |
-| ngspice | `/opt/homebrew/bin/ngspice` (`brew install ngspice`) |
 | Python bindings | project `.venv` (not a pip package) |
-| Source tree | `~/src/openEMS-Project` |
+| ngspice | `/opt/homebrew/bin/ngspice` (`brew install ngspice`) |
 
-Rebuild from scratch (only needed on a new machine):
+Do not rebuild openEMS unless this is a **new machine**. Then:
 
 ```bash
 eval "$(/opt/homebrew/bin/brew shellenv)"
 brew install cmake pkg-config boost hdf5 cgal vtk
 git clone --recursive https://github.com/thliebig/openEMS-Project.git ~/src/openEMS-Project
-cd /Users/markomijatovic/Projects/PDN-CoSimulation
 python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -U pip setuptools wheel cython
@@ -146,4 +161,4 @@ cd ~/src/openEMS-Project
 `--disable-GUI` skips AppCSXCAD (needs extra Qt). TinyXML is downloaded by the script; Homebrew no longer ships it.
 
 - **KiCad 8** — optional GUI to edit `boards/pdn_test.kicad_pcb`. The pipeline does not call `pcbnew`.
-- **ngspice** — `brew install ngspice`. Headless `ngspice -b` for Phase 3; `--spice` does not launch FDTD.
+- **ngspice** — headless `ngspice -b` for Phase 3 and the optional optimizer check; `--spice` / `--optimize` do not launch FDTD.
