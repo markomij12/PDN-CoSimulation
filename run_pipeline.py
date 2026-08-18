@@ -190,30 +190,36 @@ def _run_spice(s2p_path: Path) -> None:
 
 def _run_optimize(s2p_path: Path) -> None:
     from optimizer import optimize_decap_bom
-    from spice_models import MissingS2pError
-    from spice_models.ngspice import NgspiceNotInstalledError
+    from spice_models import ngspice_available
 
     print(f"Phase 4 — optimize decap BOM from {s2p_path} (no openEMS)")
-    board_path = DEFAULT_BOARD if DEFAULT_BOARD.is_file() else None
-    if board_path is not None:
-        print(f"  placement board {board_path} (fast plane, not FDTD)")
-    else:
-        print("  no KiCad board found; count/value search only (2-port site)")
-    try:
-        result = optimize_decap_bom(s2p_path, board_path=board_path)
-    except MissingS2pError as exc:
-        raise SystemExit(str(exc)) from exc
-    except NgspiceNotInstalledError as exc:
+    if not DEFAULT_BOARD.is_file():
         raise SystemExit(
-            "ngspice not found. On this Mac: brew install ngspice. "
-            "Then re-run --optimize (still does not launch FDTD)."
-        ) from exc
+            "boards/pdn_test.kicad_pcb not found. "
+            "The plane-scored optimizer needs that KiCad board."
+        )
+    board_path = DEFAULT_BOARD
+    print(f"  placement board {board_path} (fast plane, not FDTD)")
+    result = optimize_decap_bom(s2p_path, board_path=board_path)
 
     names = ", ".join(cap.name for cap in result.stuffing) or "(empty)"
     print(
         f"  peak |Z| {result.peak_z_before_ohm:.4g} Ω → {result.peak_z_after_ohm:.4g} Ω "
-        f"(2-port SPICE, 100 kHz–1 GHz); Z_target={result.z_target_ohm * 1e3:.0f} mΩ"
+        f"(fast plane, 100 kHz–1 GHz); Z_target={result.z_target_ohm * 1e3:.0f} mΩ"
     )
+    if (
+        result.spice_peak_z_before_ohm is not None
+        and result.spice_peak_z_after_ohm is not None
+    ):
+        print(
+            f"  2-port check peak |Z| {result.spice_peak_z_before_ohm:.4g} Ω → "
+            f"{result.spice_peak_z_after_ohm:.4g} Ω "
+            f"(all MLCCs at extracted site — cannot see other vias)"
+        )
+    elif not s2p_path.is_file():
+        print("  2-port check skipped (missing .s2p; run --board first)")
+    elif not ngspice_available():
+        print("  2-port check skipped (ngspice not found; brew install ngspice)")
     print(
         f"  BOM ${result.cost_before_usd:.2f} → ${result.cost_after_usd:.2f} "
         f"(budget ${result.cost_budget_usd:.2f}; "
@@ -231,8 +237,6 @@ def _run_optimize(s2p_path: Path) -> None:
             else "n/a"
         )
         print(f"  placement: {placed}  (plane peak |Z| {plane_z})")
-    elif board_path is None:
-        print("  placement: skipped (pass a KiCad board next to the cached .s2p)")
     wrote = "  ".join(str(path) for path in result.artifacts.values())
     if wrote:
         print(f"  wrote {wrote}")

@@ -2,9 +2,11 @@
 
 This package searches a discrete MLCC BOM and via placement to minimize
 peak |Z(f)| and MUST NOT call openEMS / CSXCAD / pcbnew. The inner loop is
-the fast cavity plane, not ngspice. Cached Touchstone is used only for the
-post-search 2-port SPICE artifact re-sim. Generate or refresh the Touchstone
-with `python run_pipeline.py --board ...` first.
+the fast cavity plane, not ngspice. Cached Touchstone is used only for a
+post-search 2-port SPICE *check* of the plane winner (does not pick the
+BOM). Missing `.s2p` or ngspice skips that check; plane artifacts still
+write. Generate or refresh the Touchstone with
+`python run_pipeline.py --board ...` first.
 """
 
 from __future__ import annotations
@@ -27,7 +29,8 @@ class OptimizeResult:
 
     ``peak_z_before_ohm`` / ``peak_z_after_ohm`` are fast-plane peak |Z_ic|,
     not 2-port SPICE. ``plane_peak_z_ohm`` is the winner's plane peak (same as
-    ``peak_z_after_ohm``).
+    ``peak_z_after_ohm``). ``spice_peak_z_*`` are the optional 2-port check
+    (None when `.s2p` or ngspice is missing).
     """
 
     stuffing: tuple[Decap, ...]
@@ -41,6 +44,8 @@ class OptimizeResult:
     artifacts: dict[str, Path]
     placement_site_indices: tuple[int, ...] = ()
     plane_peak_z_ohm: float | None = None
+    spice_peak_z_before_ohm: float | None = None
+    spice_peak_z_after_ohm: float | None = None
 
 
 def optimize_decap_bom(
@@ -58,10 +63,12 @@ def optimize_decap_bom(
 
     Requires ``board_path`` (e.g. ``boards/pdn_test.kicad_pcb``). The inner
     loop is the fast cavity plane (``search_plane_grid``), not ngspice. Does
-    not import or launch CSXCAD, openEMS, or pcbnew. After the search, a
-    2-port SPICE re-sim of empty vs winner writes artifacts (needs a cached
-    `.s2p`). `max_count` is 0–N of each catalog part (default 2 → 27 stuffing
-    vectors).
+    not import or launch CSXCAD, openEMS, or pcbnew. After the search, an
+    optional 2-port SPICE check re-sims empty vs winner stuffing at the
+    extracted site (needs cached `.s2p` and ngspice). Missing `.s2p` or
+    ngspice skips that check; plane plots still write. The check does not
+    re-rank the winner. `max_count` is 0–N of each catalog part (default 2
+    → 27 stuffing vectors).
     """
     if board_path is None:
         raise ValueError(
@@ -72,9 +79,11 @@ def optimize_decap_bom(
 
     # Lazy import: search.py imports optimizer.cost / objective / plane, not this module.
     from em_extraction.kicad_reader import read_board
+    from optimizer.objective import peak_abs_z
     from optimizer.report import write_optimize_artifacts
     from optimizer.search import search_plane_grid
-    from spice_models import from_sparams, simulate_droop
+    from spice_models import MissingS2pError, from_sparams, simulate_droop
+    from spice_models.ngspice import NgspiceNotInstalledError
 
     board = read_board(board_path)
     outcome = search_plane_grid(
@@ -85,29 +94,45 @@ def optimize_decap_bom(
         max_count=max_count,
     )
 
-    results = Path(results_dir)
-    with tempfile.TemporaryDirectory(prefix="pdn_opt_check_") as scratch:
-        scratch_dir = Path(scratch)
-        before = simulate_droop(
-            from_sparams(s2p_path, decaps=()),
-            results_dir=scratch_dir / "before",
-        )
-        after = simulate_droop(
-            from_sparams(s2p_path, decaps=outcome.stuffing),
-            results_dir=scratch_dir / "after",
-        )
-        artifacts = write_optimize_artifacts(
-            results_dir=results,
-            stuffing=outcome.stuffing,
-            cost_after_usd=outcome.cost_after_usd,
-            cost_budget_usd=cost_budget_usd,
-            feasible=outcome.feasible,
-            z_target_ohm=z_target_ohm,
-            before=before,
-            after=after,
-            board=board,
-            stuffing_at_sites=outcome.stuffing_at_sites,
-        )
+    before = None
+    after = None
+    spice_peak_z_before_ohm: float | None = None
+    spice_peak_z_after_ohm: float | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="pdn_opt_check_") as scratch:
+            scratch_dir = Path(scratch)
+            before = simulate_droop(
+                from_sparams(s2p_path, decaps=()),
+                results_dir=scratch_dir / "before",
+            )
+            after = simulate_droop(
+                from_sparams(s2p_path, decaps=outcome.stuffing),
+                results_dir=scratch_dir / "after",
+            )
+            spice_peak_z_before_ohm = peak_abs_z(
+                before.z_ohm, before.freq_hz, fmin_hz, fmax_hz
+            )
+            spice_peak_z_after_ohm = peak_abs_z(
+                after.z_ohm, after.freq_hz, fmin_hz, fmax_hz
+            )
+    except (MissingS2pError, NgspiceNotInstalledError):
+        before = None
+        after = None
+        spice_peak_z_before_ohm = None
+        spice_peak_z_after_ohm = None
+
+    artifacts = write_optimize_artifacts(
+        results_dir=Path(results_dir),
+        stuffing=outcome.stuffing,
+        cost_after_usd=outcome.cost_after_usd,
+        cost_budget_usd=cost_budget_usd,
+        feasible=outcome.feasible,
+        z_target_ohm=z_target_ohm,
+        before=before,
+        after=after,
+        board=board,
+        stuffing_at_sites=outcome.stuffing_at_sites,
+    )
 
     return OptimizeResult(
         stuffing=outcome.stuffing,
@@ -121,4 +146,6 @@ def optimize_decap_bom(
         artifacts=artifacts,
         placement_site_indices=outcome.placement_site_indices,
         plane_peak_z_ohm=outcome.peak_z_after_ohm,
+        spice_peak_z_before_ohm=spice_peak_z_before_ohm,
+        spice_peak_z_after_ohm=spice_peak_z_after_ohm,
     )

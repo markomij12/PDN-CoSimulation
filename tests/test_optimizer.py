@@ -20,7 +20,7 @@ from optimizer.plane import (
     spreading_inductance,
 )
 from optimizer.search import enumerate_count_grid, stuffing_from_counts
-from spice_models import MissingS2pError, ngspice_available
+from spice_models import ngspice_available
 from spice_models.library import (
     DECAP_100N_0402,
     DECAP_1U_0603,
@@ -152,17 +152,24 @@ def test_optimize_requires_board_path(tmp_path: Path) -> None:
         optimize_decap_bom(missing, results_dir=tmp_path)
 
 
-def test_optimize_missing_s2p_tells_you_to_run_board(tmp_path: Path) -> None:
+def test_optimize_missing_s2p_skips_2port_check(tmp_path: Path) -> None:
     missing = tmp_path / "nope.s2p"
     if not BOARD_PATH.exists():
         pytest.skip(f"{BOARD_PATH} not found")
-    with pytest.raises(MissingS2pError, match="--board"):
-        optimize_decap_bom(
-            missing,
-            board_path=BOARD_PATH,
-            results_dir=tmp_path,
-            max_count=1,
-        )
+    result = optimize_decap_bom(
+        missing,
+        board_path=BOARD_PATH,
+        results_dir=tmp_path,
+        max_count=1,
+    )
+    assert np.isfinite(result.peak_z_before_ohm)
+    assert np.isfinite(result.peak_z_after_ohm)
+    assert result.spice_peak_z_before_ohm is None
+    assert result.spice_peak_z_after_ohm is None
+    assert result.artifacts["z_png"].is_file()
+    assert result.artifacts["bom_txt"].is_file()
+    assert "z_2port_png" not in result.artifacts
+    assert "droop_png" not in result.artifacts
 
 
 # --- Skip if ngspice missing OR .s2p missing --------------------------------
@@ -193,3 +200,7 @@ def test_optimize_decap_bom_spice_and_plane(tmp_path: Path) -> None:
     assert len(result.placement_site_indices) == len(result.stuffing)
     assert result.plane_peak_z_ohm is not None
     assert np.isfinite(result.plane_peak_z_ohm)
+    assert result.spice_peak_z_before_ohm is not None
+    assert result.spice_peak_z_after_ohm is not None
+    assert np.isfinite(result.spice_peak_z_before_ohm)
+    assert np.isfinite(result.spice_peak_z_after_ohm)

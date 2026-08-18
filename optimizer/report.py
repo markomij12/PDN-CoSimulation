@@ -3,7 +3,9 @@
 Writes gitignored files under ``results/``. Does not import CSXCAD, openEMS, or
 pcbnew, and does not launch FDTD. ``z_opt.png`` is the fast-plane overlay
 (empty sites vs placed winner from ``plane_impedance``), not 2-port SPICE.
-Droop remains a post-search 2-port ngspice check of empty vs winning stuffing.
+The optional 2-port ngspice check writes ``z_opt_2port.png`` and
+``droop_opt.png`` only when both DroopResults are present; it does not pick
+the winner.
 """
 
 from __future__ import annotations
@@ -34,12 +36,12 @@ def write_optimize_artifacts(
     cost_budget_usd: float,
     feasible: bool,
     z_target_ohm: float,
-    before: DroopResult,
-    after: DroopResult,
+    before: DroopResult | None,
+    after: DroopResult | None,
     board: BoardGeometry | None,
     stuffing_at_sites: Sequence[Sequence[Decap]] | None,
 ) -> dict[str, Path]:
-    """Write fast-plane |Z(f)| overlay, cost table, droop overlay, and spatial map if placed."""
+    """Write plane |Z(f)| overlay, cost table, optional 2-port check plots, spatial map."""
     out = Path(results_dir)
     out.mkdir(parents=True, exist_ok=True)
     artifacts: dict[str, Path] = {}
@@ -50,7 +52,13 @@ def write_optimize_artifacts(
         artifacts["z_png"] = _plot_z_before_after(
             freq_hz, z_empty, z_winner, z_target_ohm, out / "z_opt.png"
         )
-    artifacts["droop_png"] = _plot_droop_before_after(before, after, out / "droop_opt.png")
+    if before is not None and after is not None:
+        artifacts["z_2port_png"] = _plot_z_2port_check(
+            before, after, z_target_ohm, out / "z_opt_2port.png"
+        )
+        artifacts["droop_png"] = _plot_droop_before_after(
+            before, after, out / "droop_opt.png"
+        )
     artifacts["bom_txt"] = _write_bom_cost(
         stuffing,
         cost_after_usd,
@@ -150,6 +158,47 @@ def _plot_z_before_after(
     return path
 
 
+def _plot_z_2port_check(
+    before: DroopResult,
+    after: DroopResult,
+    z_target_ohm: float,
+    path: Path,
+) -> Path:
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
+    ax.loglog(
+        before.freq_hz,
+        np.abs(before.z_ohm),
+        color="#888888",
+        lw=1.3,
+        label="before (empty, 2-port)",
+    )
+    ax.loglog(
+        after.freq_hz,
+        np.abs(after.z_ohm),
+        color="#1f4e79",
+        lw=1.5,
+        label="after (winner stuffed at port 2)",
+    )
+    ax.axhline(
+        z_target_ohm,
+        color="#c44",
+        ls="--",
+        lw=0.9,
+        label=f"target {z_target_ohm * 1e3:.0f} mΩ",
+    )
+    ax.set_xlabel("frequency (Hz)")
+    ax.set_ylabel("|Z| (Ω)")
+    ax.set_title(
+        "2-port check, all MLCCs at the extracted site — cannot see other vias"
+    )
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+    return path
+
+
 def _plot_droop_before_after(before: DroopResult, after: DroopResult, path: Path) -> Path:
     fig, ax = plt.subplots(figsize=(7.5, 4.2))
     ax.plot(
@@ -168,7 +217,9 @@ def _plot_droop_before_after(before: DroopResult, after: DroopResult, path: Path
     )
     ax.set_xlabel("time (ns)")
     ax.set_ylabel("IC pin voltage (V)")
-    ax.set_title("PDN voltage droop (ngspice check of winning BOM, no FDTD)")
+    ax.set_title(
+        "2-port / port-2 check of winning BOM (not FDTD, not the plane placement result)"
+    )
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
