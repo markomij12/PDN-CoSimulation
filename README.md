@@ -20,8 +20,12 @@ openEMS is how I check the mesh and ports. It is not inside `--optimize`. A 100 
 
 ## How to run
 
+After a clone (no openEMS required for `--optimize`; the coupon is already in `boards/`):
+
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
 python run_pipeline.py                              # Phase 1 plate (analytical gate, not a PDN)
 python run_pipeline.py --board boards/pdn_test.kicad_pcb
 python run_pipeline.py --spice results/board.s2p
@@ -73,9 +77,9 @@ Gitignored. Run `--optimize` and look under `results/`.
 
 | File | What it is |
 | --- | --- |
-| `z_opt.png` | Plane \|Z(f)\| empty vs winning via assignment. Log-log, 50 mΩ line. |
-| `pareto.png` | Peak \|Z\| vs BOM $ for each stuffing after placement. Feasible vs over budget, winner marked. |
-| `z_spatial.png` | Plane peak \|Z\| vs xy, IC and vias overlaid. |
+| `z_opt.png` | Plane Z(f) overlay, empty vs winning via assignment. Log-log, 50 mΩ line. |
+| `pareto.png` | Peak Z vs BOM $ for each stuffing after placement. Feasible vs over budget, winner marked. |
+| `z_spatial.png` | Plane peak Z vs xy, IC and vias overlaid. |
 | `bom_cost.txt` | Part, qty, unit $, total vs $0.50 budget. |
 | `z_opt_2port.png`, `droop_opt.png` | 2-port check only (needs ngspice and `board.s2p`). |
 
