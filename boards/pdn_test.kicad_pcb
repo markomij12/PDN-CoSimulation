@@ -48,8 +48,8 @@
 				(thickness 0.035)
 			)
 			(layer "dielectric 1"
-				(type "prepreg")
-				(thickness 0.2)
+				(type "core")
+				(thickness 1.04)
 				(material "FR4")
 				(epsilon_r 4.5)
 				(loss_tangent 0.02)
@@ -59,8 +59,8 @@
 				(thickness 0.035)
 			)
 			(layer "dielectric 2"
-				(type "core")
-				(thickness 1.04)
+				(type "prepreg")
+				(thickness 0.2)
 				(material "FR4")
 				(epsilon_r 4.5)
 				(loss_tangent 0.02)
@@ -189,7 +189,7 @@
 	(footprint "Capacitor_SMD:C_0603_1608Metric"
 		(layer "F.Cu")
 		(uuid "bbbbbbbb-0001-4000-8000-000000000001")
-		(at 12 5)
+		(at 5 6.2)
 		(descr "Candidate decap C1")
 		(tags "pdn decap")
 		(property "Reference" "C1"
@@ -239,7 +239,7 @@
 	(footprint "Capacitor_SMD:C_0603_1608Metric"
 		(layer "F.Cu")
 		(uuid "cccccccc-0002-4000-8000-000000000001")
-		(at 18 5)
+		(at 9.8 10)
 		(descr "Candidate decap C2")
 		(tags "pdn decap")
 		(property "Reference" "C2"
@@ -289,7 +289,7 @@
 	(footprint "Capacitor_SMD:C_0603_1608Metric"
 		(layer "F.Cu")
 		(uuid "dddddddd-0003-4000-8000-000000000001")
-		(at 25 10)
+		(at 21 8)
 		(descr "Candidate decap C3")
 		(tags "pdn decap")
 		(property "Reference" "C3"
@@ -345,7 +345,7 @@
 		(uuid "eeeeeeee-0000-4000-8000-000000000001")
 	)
 	(via
-		(at 11.2 5)
+		(at 4.2 6.2)
 		(size 0.8)
 		(drill 0.4)
 		(layers "F.Cu" "B.Cu")
@@ -353,7 +353,7 @@
 		(uuid "ffffffff-0001-4000-8000-000000000001")
 	)
 	(via
-		(at 12.8 5)
+		(at 5.8 6.2)
 		(size 0.8)
 		(drill 0.4)
 		(layers "F.Cu" "B.Cu")
@@ -361,7 +361,7 @@
 		(uuid "ffffffff-0001-4000-8000-000000000002")
 	)
 	(via
-		(at 17.2 5)
+		(at 9.0 10)
 		(size 0.8)
 		(drill 0.4)
 		(layers "F.Cu" "B.Cu")
@@ -369,7 +369,7 @@
 		(uuid "ffffffff-0002-4000-8000-000000000001")
 	)
 	(via
-		(at 18.8 5)
+		(at 10.6 10)
 		(size 0.8)
 		(drill 0.4)
 		(layers "F.Cu" "B.Cu")
@@ -377,7 +377,7 @@
 		(uuid "ffffffff-0002-4000-8000-000000000002")
 	)
 	(via
-		(at 24.2 10)
+		(at 20.2 8)
 		(size 0.8)
 		(drill 0.4)
 		(layers "F.Cu" "B.Cu")
@@ -385,7 +385,7 @@
 		(uuid "ffffffff-0003-4000-8000-000000000001")
 	)
 	(via
-		(at 25.8 10)
+		(at 21.8 8)
 		(size 0.8)
 		(drill 0.4)
 		(layers "F.Cu" "B.Cu")

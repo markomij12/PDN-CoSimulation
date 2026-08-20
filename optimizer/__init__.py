@@ -15,6 +15,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from optimizer.objective import FMAX_HZ, FMIN_HZ
 from spice_models.library import Decap
 
 __all__ = [
@@ -57,8 +58,8 @@ def optimize_decap_bom(
     *,
     cost_budget_usd: float = 0.50,
     z_target_ohm: float = 50e-3,  # match spice_models.simulate.Z_TARGET_OHM
-    fmin_hz: float = 1e5,
-    fmax_hz: float = 1e9,
+    fmin_hz: float = FMIN_HZ,
+    fmax_hz: float = FMAX_HZ,
     board_path: Path | str | None = None,
     results_dir: Path | str = Path("results"),
     max_count: int = 3,
@@ -147,6 +148,8 @@ def optimize_decap_bom(
         stuffing_at_sites=outcome.stuffing_at_sites,
         pareto_points=outcome.evaluated_points,
         peak_z_after_ohm=outcome.peak_z_after_ohm,
+        fmin_hz=fmin_hz,
+        fmax_hz=fmax_hz,
     )
 
     return OptimizeResult(

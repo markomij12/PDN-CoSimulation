@@ -18,12 +18,15 @@ import numpy as np
 
 from spice_models.netlist import SpiceNetlist
 from spice_models.ngspice import NgspiceNotInstalledError, ngspice_binary
+from spice_models.plot_style import AFTER, BEFORE, DPI, TARGET, apply_style, style_axes
 
 SETTLE_ABS_V = 5e-3
 Z_TARGET_OHM = 50e-3
 AC_FMIN_HZ = 1e3
 AC_FMAX_HZ = 1e9
 AC_PTS_PER_DEC = 51
+
+apply_style()
 
 
 @dataclass(frozen=True)
@@ -200,34 +203,34 @@ def _plot_droop(
     t_settle: float | None,
     path: Path,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(7.5, 4.2))
-    ax.plot(time_s * 1e9, v_ic, color="#1f4e79", lw=1.4, label="v(ic)")
-    ax.axhline(v_pre, color="#888888", ls="--", lw=0.8, label=f"pre-step {v_pre:.3f} V")
-    ax.axvline(t_start * 1e9, color="#c44", ls=":", lw=0.8, label="load step")
-    ax.axvline(t_peak * 1e9, color="#d97706", ls=":", lw=0.8)
+    fig, ax = plt.subplots(figsize=(8.2, 4.8))
+    ax.plot(time_s * 1e9, v_ic, color=AFTER, lw=2.0, label="v(ic)")
+    ax.axhline(v_pre, color=BEFORE, ls="--", lw=1.0, label=f"pre-step {v_pre:.3f} V")
+    ax.axvline(t_start * 1e9, color=TARGET, ls=":", lw=1.1, label="load step")
+    ax.axvline(t_peak * 1e9, color="#D97706", ls=":", lw=1.1)
     if t_settle is not None:
-        ax.axvline(t_settle * 1e9, color="#2a9d8f", ls=":", lw=0.8, label="settled")
+        ax.axvline(t_settle * 1e9, color="#0F766E", ls=":", lw=1.1, label="settled")
     ax.set_xlabel("time (ns)")
     ax.set_ylabel("IC pin voltage (V)")
-    ax.set_title("PDN voltage droop (ngspice transient)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=8)
+    ax.set_title("PDN voltage droop")
+    style_axes(ax, which="major")
+    ax.legend(loc="best")
     fig.tight_layout()
-    fig.savefig(path, dpi=140)
+    fig.savefig(path, dpi=DPI)
     plt.close(fig)
 
 
 def _plot_z(freq_hz: np.ndarray, z_ohm: np.ndarray, path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(7.5, 4.2))
-    ax.loglog(freq_hz, np.abs(z_ohm), color="#1f4e79", lw=1.4, label="|Z(f)| at IC")
-    ax.axhline(Z_TARGET_OHM, color="#c44", ls="--", lw=0.9, label=f"target {Z_TARGET_OHM * 1e3:.0f} mΩ")
+    fig, ax = plt.subplots(figsize=(8.2, 4.8))
+    ax.loglog(freq_hz, np.abs(z_ohm), color=AFTER, lw=2.1, label="|Z(f)| at U1")
+    ax.axhline(Z_TARGET_OHM, color=TARGET, ls="--", lw=1.15, label=f"target {Z_TARGET_OHM * 1e3:.0f} mΩ")
     ax.set_xlabel("frequency (Hz)")
     ax.set_ylabel("|Z| (Ω)")
-    ax.set_title("PDN impedance at the IC pin (same circuit as droop)")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="best", fontsize=8)
+    ax.set_title("PDN impedance at the IC pin")
+    style_axes(ax)
+    ax.legend(loc="best")
     fig.tight_layout()
-    fig.savefig(path, dpi=140)
+    fig.savefig(path, dpi=DPI)
     plt.close(fig)
 
 

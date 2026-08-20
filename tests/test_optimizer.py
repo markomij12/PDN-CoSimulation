@@ -132,7 +132,7 @@ def test_f_cross_hz_met_or_lowest_violation() -> None:
 
 def test_fast_plane_no_fdtd() -> None:
     board = read_board(BOARD_PATH)
-    assert plane_capacitance(board) == pytest.approx(22.99e-12, rel=0.05)
+    assert plane_capacitance(board) == pytest.approx(119.5e-12, rel=0.05)
 
     empty_sites = tuple(() for _ in board.decap_sites)
     freq_hz, z_empty = plane_impedance(board, empty_sites)

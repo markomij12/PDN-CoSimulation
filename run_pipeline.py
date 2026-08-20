@@ -27,6 +27,16 @@ BOARD_S2P = Path("results") / "board.s2p"
 DEFAULT_BOARD = Path("boards") / "pdn_test.kicad_pcb"
 
 
+def _fmt_hz(value: float) -> str:
+    if value >= 1e9:
+        return f"{value / 1e9:g} GHz"
+    if value >= 1e6:
+        return f"{value / 1e6:g} MHz"
+    if value >= 1e3:
+        return f"{value / 1e3:g} kHz"
+    return f"{value:g} Hz"
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="PDN co-simulation pipeline")
     parser.add_argument(
@@ -193,6 +203,7 @@ def _run_spice(s2p_path: Path) -> None:
 
 def _run_optimize(s2p_path: Path) -> None:
     from optimizer import optimize_decap_bom
+    from optimizer.objective import FMAX_HZ, FMIN_HZ
     from spice_models import ngspice_available
 
     print(f"Phase 4/5 — optimize decap BOM from {s2p_path} (fast plane, no openEMS)")
@@ -208,7 +219,7 @@ def _run_optimize(s2p_path: Path) -> None:
     names = ", ".join(cap.name for cap in result.stuffing) or "(empty)"
     print(
         f"  peak |Z| {result.peak_z_before_ohm:.4g} Ω → {result.peak_z_after_ohm:.4g} Ω "
-        f"(fast plane, 100 kHz–1 GHz); Z_target={result.z_target_ohm * 1e3:.0f} mΩ"
+        f"(plane, {_fmt_hz(FMIN_HZ)}–{_fmt_hz(FMAX_HZ)}); Z_target={result.z_target_ohm * 1e3:.0f} mΩ"
     )
     cross = (
         "met in-band"
