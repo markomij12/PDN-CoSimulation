@@ -10,4 +10,4 @@ Suggested images:
   https://raw.githubusercontent.com/markomij12/PDN-CoSimulation/main/docs/sample/z_opt.png
   https://raw.githubusercontent.com/markomij12/PDN-CoSimulation/main/docs/sample/pareto.png
 
-I didn't hit 50 mΩ to 1 GHz (2 nH VRM → ωL ≈ 12.6 Ω at 1 GHz).
+I didn't hit 50 mΩ to 1 GHz (2 nH VRM → ωL ≈ 12.6 Ω at 1 GHz). On this coupon the search holds 50 mΩ through 30 MHz.

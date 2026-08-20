@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import numpy as np
 
-# Search band: max |Z(f)| over 100 kHz–1 GHz (Phase 4 spec).
+# Search band: peak |Z(f)| over 100 kHz–30 MHz. That's where these MLCCs can
+# still fight 50 mΩ. Plots still go to 1 GHz so the 2 nH VRM / ESL climb is
+# visible; scoring that climb would just pick max 0402 count.
 FMIN_HZ = 1e5
-FMAX_HZ = 1e9
+FMAX_HZ = 3e7
 
 # Local copy of spice_models.simulate.Z_TARGET_OHM so this module does not
 # import simulate.py (ngspice / matplotlib). Matches the z_pdn.png reference

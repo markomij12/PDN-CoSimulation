@@ -1,10 +1,9 @@
 Phase 4/5 — optimize decap BOM from results/board.s2p (fast plane, no openEMS)
   placement board boards/pdn_test.kicad_pcb (fast plane, not FDTD)
-  peak |Z| 98.45 Ω → 3.841 Ω (fast plane, 100 kHz–1 GHz); Z_target=50 mΩ
-  peak |Z| after at 1e+09 Hz; f_cross=2.239e+06 Hz
-  2-port check peak |Z| 471.9 Ω → 9.155 Ω (all MLCCs at extracted site — cannot see other vias)
-  BOM $0.00 → $0.42 (budget $0.50; feasible)
-  stuffing: C100n, C100n_1, C100n_2, C1u
-  placement: C100n@via[0], C100n_1@via[1], C100n_2@via[2], C1u@via[0]  (plane peak |Z| 3.841 Ω)
+  peak |Z| 0.3538 Ω → 0.0431 Ω (plane, 100 kHz–30 MHz); Z_target=50 mΩ
+  peak |Z| after at 1.778e+06 Hz; met in-band
+  2-port check skipped (missing .s2p; run --board first)
+  BOM $0.00 → $0.46 (budget $0.50; feasible)
+  stuffing: C100n, C1u, C1u_1, C1u_2
+  placement: C100n@via[2], C1u@via[1], C1u_1@via[1], C1u_2@via[1]  (plane peak |Z| 0.0431 Ω)
   plane: results/z_opt.png  results/pareto.png  results/z_spatial.png  results/bom_cost.txt
-  2-port check: results/z_opt_2port.png  results/droop_opt.png

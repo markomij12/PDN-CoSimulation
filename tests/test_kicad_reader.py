@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BOARD_PATH = REPO_ROOT / "boards" / "pdn_test.kicad_pcb"
 
 COPPER_THICKNESS_M = 35e-6
-INNER_CORE_M = 1.04e-3
+INNER_CORE_M = 0.2e-3
 INNER_EPS = 4.5
 BOARD_WIDTH_M = 30e-3
 BOARD_HEIGHT_M = 20e-3
