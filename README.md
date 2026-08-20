@@ -67,7 +67,7 @@ Writes `results/droop.png`, `results/z_pdn.png`, and a short droop summary. VRM,
 
 ### Phase 4/5 — `--optimize results/board.s2p`
 
-Inner loop is the plane plus a discrete grid: 0–3 of each of three Murata parts (64 stuffing vectors), assigned to the VCC vias on `pdn_test`. N ≤ 5 enumerates site assignments; more than that is greedy nearest-to-IC. No SciPy `minimize` on C. No openEMS.
+Inner loop is the plane plus a discrete grid: 0–3 of each of three Murata parts (64 stuffing vectors), assigned to the VCC vias on `pdn_test`. Score is peak |Z| from 100 kHz–30 MHz — that's the band where these MLCCs can still fight 50 mΩ. Plots still go to 1 GHz so you can see the 2 nH VRM / ESL climb. N ≤ 5 enumerates site assignments; more than that is greedy nearest-to-IC. No SciPy `minimize` on C. No openEMS.
 
 The 2-port ngspice pass is a check of the winner with every MLCC at extracted port 2. It cannot see the other vias and it does not pick the BOM.
 
@@ -77,9 +77,9 @@ The 2-port ngspice pass is a check of the winner with every MLCC at extracted po
 
 | File | What it is |
 | --- | --- |
-| `z_opt.png` | Plane Z(f) overlay, empty vs winning via assignment. Log-log, 50 mΩ line. |
-| `pareto.png` | Peak Z vs BOM $ for each stuffing after placement. Feasible vs over budget, winner marked. |
-| `z_spatial.png` | Plane peak Z vs xy, IC and vias overlaid. |
+| `z_opt.png` | Plane Z(f): full band plus a 100 kHz–30 MHz zoom. Empty vs winner, 50 mΩ line, VRM |R+jωL|. |
+| `pareto.png` | Peak Z in the search band vs BOM $ after placement. Feasible vs over budget, winner marked. |
+| `z_spatial.png` | Search-band peak Z vs xy, IC and vias overlaid. |
 | `bom_cost.txt` | Part, qty, unit $, total vs $0.50 budget. |
 | `z_opt_2port.png`, `droop_opt.png` | 2-port check only (needs ngspice and `board.s2p`). |
 
@@ -87,19 +87,19 @@ The 2-port ngspice pass is a check of the winner with every MLCC at extracted po
 
 ## Sample run
 
-A coupon `--optimize` is in `docs/sample/` — `cli.txt`, `bom_cost.txt`, the 2-port check (`z_opt_2port.png` / `droop_opt.png`), and that folder's README. I'm not dumping all eight images here.
+A coupon `--optimize` is in `docs/sample/` — `cli.txt`, `bom_cost.txt`, and that folder's README. I'm not dumping every artifact here.
 
 ![plane |Z(f)|](docs/sample/z_opt.png)
 
-Empty vs winner on the plane. I didn't hit 50 mΩ; default VRM is 2 nH, so ωL ≈ 12.6 Ω at 1 GHz.
+Empty vs winner on the plane. Search band is 100 kHz–30 MHz (354 mΩ → 43 mΩ, under 50 mΩ). The 1 GHz climb is the 2 nH VRM plus ESL — I'm not claiming I killed that.
 
 ![Pareto peak |Z| vs BOM](docs/sample/pareto.png)
 
-Pareto of stuffing after placement. Winner is three 100 nF 0402 + one 1 µF 0603 at $0.42 under the $0.50 cap.
+Pareto of stuffing after placement, scored in that same band. Winner is one 100 nF 0402 + three 1 µF 0603 at $0.46.
 
 ![plane peak |Z| vs xy](docs/sample/z_spatial.png)
 
-Spatial map with U1 and the VCC vias.
+Spatial map of search-band peak |Z|, U1 and the VCC vias marked.
 
 ## What this is not
 
@@ -107,9 +107,9 @@ The 2-port `.s2p` cannot move capacitors. Placement is on the plane; the SPICE c
 
 The plane is one cavity: parallel-plate C plus ln spreading L to each used via. Not a full cavity-mode series.
 
-I did not hit 50 mΩ to 1 GHz, and I am not claiming I did. Default VRM `L_out` is 2 nH, so ωL is about 12.6 Ω at 1 GHz (1.26 Ω at 100 MHz). That floor is the inductor plus ESL, not “add another 22 µF”. The search constraint is BOM cost ($0.50). The 50 mΩ line is the same reference as `z_pdn.png`.
+I did not hit 50 mΩ to 1 GHz, and I am not claiming I did. The search holds 50 mΩ through 30 MHz on this coupon. Default VRM `L_out` is 2 nH, so ωL is about 12.6 Ω at 1 GHz (1.26 Ω at 100 MHz). That climb is the inductor plus ESL, not “add another 22 µF”. The search constraint is BOM cost ($0.50). The 50 mΩ line is the same reference as `z_pdn.png`.
 
-`pdn_test` is a 30 mm × 20 mm 4-layer coupon.
+`pdn_test` is a 30 mm × 20 mm 4-layer coupon. VCC and GND sit on the inner pair with 0.2 mm dielectric (the PDN cavity). Two VCC vias are next to U1; one is farther out so placement still has a job.
 
 ## If I had more time
 
