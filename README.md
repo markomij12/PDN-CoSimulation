@@ -29,7 +29,7 @@ pip install -r requirements.txt
 python run_pipeline.py                              # Phase 1 plate (analytical gate, not a PDN)
 python run_pipeline.py --board boards/pdn_test.kicad_pcb
 python run_pipeline.py --spice results/board.s2p
-python run_pipeline.py --optimize results/board.s2p  # no FDTD
+python run_pipeline.py --optimize results/board.s2p
 pytest
 ```
 
@@ -73,7 +73,7 @@ The 2-port ngspice pass is a check of the winner with every MLCC at extracted po
 
 ## Plots
 
-Gitignored. Run `--optimize` and look under `results/`.
+`results/` is gitignored. Run `--optimize` and look under `results/`. GitHub shows the same filenames checked in under `docs/sample/`.
 
 | File | What it is |
 | --- | --- |
@@ -84,6 +84,22 @@ Gitignored. Run `--optimize` and look under `results/`.
 | `z_opt_2port.png`, `droop_opt.png` | 2-port check only (needs ngspice and `board.s2p`). |
 
 `--spice` still writes `droop.png` and `z_pdn.png` from the `.s2p` alone.
+
+## Sample run
+
+A coupon `--optimize` is in `docs/sample/` — `cli.txt`, `bom_cost.txt`, the 2-port check (`z_opt_2port.png` / `droop_opt.png`), and that folder's README. I'm not dumping all eight images here.
+
+![plane |Z(f)|](docs/sample/z_opt.png)
+
+Empty vs winner on the plane. I didn't hit 50 mΩ; default VRM is 2 nH, so ωL ≈ 12.6 Ω at 1 GHz.
+
+![Pareto peak |Z| vs BOM](docs/sample/pareto.png)
+
+Pareto of stuffing after placement. Winner is three 100 nF 0402 + one 1 µF 0603 at $0.42 under the $0.50 cap.
+
+![plane peak |Z| vs xy](docs/sample/z_spatial.png)
+
+Spatial map with U1 and the VCC vias.
 
 ## What this is not
 
