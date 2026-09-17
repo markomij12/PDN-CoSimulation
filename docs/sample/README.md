@@ -1,6 +1,27 @@
 # Sample `--optimize` run
 
-I ran `python run_pipeline.py --optimize results/board.s2p` on the in-repo coupon `boards/pdn_test.kicad_pcb`. Inner loop is the lumped cavity plane. The `.s2p` is only the optional 2-port ngspice check after the search.
+I ran `python run_pipeline.py --optimize results/board.s2p` on the in-repo coupon `boards/pdn_test.kicad_pcb`. Inner loop is the lumped cavity plane.
+
+## How to reproduce
+
+`--optimize` does **not** write `results/board.s2p`. That file is gitignored (`results/*`). The 2-port ngspice check reads it if present; otherwise the plane search still runs and the 2-port plots are skipped.
+
+To produce the Touchstone (needs openEMS in the venv; see the root README FDTD install):
+
+```bash
+python run_pipeline.py --board boards/pdn_test.kicad_pcb
+```
+
+Then, with ngspice on `PATH`:
+
+```bash
+python run_pipeline.py --optimize results/board.s2p   # plane plots + 2-port check
+python run_pipeline.py --spice results/board.s2p      # z_pdn.png and droop.png only
+```
+
+Copy from `results/` into this folder: `cli.txt` (stdout of `--optimize`), `bom_cost.txt`, `z_opt.png`, `pareto.png`, `z_spatial.png`, `z_opt_2port.png`, `droop_opt.png`, `z_pdn.png`, `droop.png`.
+
+Without `--board` / `.s2p`, a clone still gets the plane sample (`z_opt.png`, `pareto.png`, `z_spatial.png`, `bom_cost.txt`). The 2-port and `--spice` images in this folder were generated with a local `results/board.s2p`.
 
 The coupon is a 30 mm × 20 mm 4-layer with VCC/GND on a 0.2 mm inner pair. Two VCC vias sit near U1; one is farther out. Search scores peak |Z| from 100 kHz–30 MHz — that's where these MLCCs can still fight 50 mΩ. Plots still go to 1 GHz.
 
