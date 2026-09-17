@@ -1,6 +1,6 @@
 # PDN Co-Simulation
 
-KiCad board in, decoupling BOM and |Z(f)| out. I started doing this kind of PDN work at Endura; this repo is me rebuilding that pipeline on KiCad, openEMS as a validator, ngspice, and Python. Inner loop is the cavity plane on `pdn_test`, not a GUI.
+KiCad board in, decoupling BOM and |Z(f)| out. A personal project exploring PCB power delivery network analysis with open-source tools. Inner loop is the cavity plane on `pdn_test`, not a GUI.
 
 GitHub: https://github.com/markomij12/PDN-CoSimulation
 

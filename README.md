@@ -4,7 +4,7 @@ KiCad board in, decoupling BOM and impedance plots out.
 
 I extract the power/ground cavity, run SPICE, and search a small catalog of real MLCCs (ESR/ESL, not ideal C) under a cost cap. Same loop SI/PI teams run with HFSS/SIwave and Cadence, minus the GUI.
 
-I started doing this kind of PDN work at Endura. This repo is me rebuilding that pipeline on open tools so I can change a layout and rerun one command.
+A personal project exploring PCB power delivery network analysis with open-source tools.
 
 ```
 boards/pdn_test.kicad_pcb
